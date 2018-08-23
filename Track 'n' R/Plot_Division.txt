@@ -1,0 +1,549 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////																////
+////	         This ImageJ macro plots cell division and competence for division from raw PointTracker data	////
+////					 by calling the javascript 'Plot_Division.js'.						////
+////																////
+////							Florent Pantin, 2013							////
+////																////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+/// Initial settings
+
+	// Set file separators
+	lineseparator = "\n";
+	cellseparator = ",";
+
+	// Set the path of R and scripts
+	pathOfScripts = getDirectory("imagej") + "macros\\Track 'n' R\\";
+	pathOfScripts = replace(pathOfScripts, "PROGRA~1", "Program Files");
+	pathOfScripts = replace(pathOfScripts, "PROGRA~2", "Program Files (x86)");
+	nameOfScript = "Plot_Division";
+	nameOfRScript = nameOfScript + ".r";
+	nameOfRoutFile = nameOfRScript + ".Rout";
+	nameOfJavaScript = nameOfScript + ".js";
+	while (File.exists(pathOfScripts + "Track_n_R.r") != 1 || File.exists(pathOfScripts + nameOfRScript) != 1 || File.exists(pathOfScripts + nameOfJavaScript) != 1)
+		{
+		Dialog.create("Error");
+		Dialog.addMessage("The scripts:\n    - Track_n_R.r\n    - " + nameOfRScript + "\n    - " + nameOfJavaScript + "\nare not all present in the expected folder (" + pathOfScripts + ").\nSelect the directory where the three of them are located.");
+		Dialog.show();
+		pathOfScripts = getDirectory("Select the script directory");
+		}
+	if (File.exists(pathOfScripts + "Rpath.txt") !=1)
+		{
+		Rpath = "";
+		while (endsWith(Rpath, "\\R.exe") != 1)
+			{
+			Rpath = File.openDialog("Select the R executable (e.g. 'C:\\Program Files\\R\\R-3.0.1\\bin\\x64\\R.exe')");
+			}
+		f = File.open(pathOfScripts + "Rpath.txt");
+		print(f, Rpath);
+		File.close(f);
+		}
+	else
+		{
+		Rpath = split(File.openAsString(pathOfScripts + "Rpath.txt"), lineseparator);
+		Rpath = split(Rpath[0], cellseparator);
+		Rpath = Rpath[0];
+		if (File.exists(Rpath) !=1)
+			{
+			Rpath = "";
+			while (endsWith(Rpath, "\\R.exe") != 1)
+				{
+				Rpath = File.openDialog("Select the R executable (e.g. 'C:\\Program Files\\R\\R-3.0.1\\bin\\x64\\R.exe')");
+				}
+			f = File.open(pathOfScripts + "Rpath.txt");
+			print(f, Rpath);
+			File.close(f);
+			}
+		}
+	
+	// Set the csv file and the directory containing the project
+	csvFile = File.openDialog("Select the csv file containing raw data");
+	csvName = File.getName(csvFile);
+	csvPath = substring(csvFile, 0, indexOf(csvFile, csvName));
+	idx_Data = indexOf(csvPath, "Data\\");
+	if (idx_Data != -1) { projDir = substring(csvFile, 0, idx_Data); } else { projDir = "error"; };
+	while ((endsWith(csvFile, ".csv") != 1) || (projDir + "Data\\" + csvName != csvFile))
+		{
+		Dialog.create("Error");
+		Dialog.addMessage("The file should be a CSV file located in the 'Data\' folder of the project directory.\nSelect the csv file again.");
+		Dialog.show();
+		csvFile = File.openDialog("Select the csv file containing raw data");
+		csvName = File.getName(csvFile);
+		csvPath = substring(csvFile, 0, indexOf(csvFile, csvName));
+		idx_Data = indexOf(csvPath, "Data\\");
+		if (idx_Data != -1) { projDir = substring(csvFile, 0, idx_Data); }	else { projDir = "error"; };
+		}
+
+
+/// Get images to be plotted
+
+	// Get the image information
+
+	linesInfo = split(File.openAsString(csvFile), lineseparator);
+	Names = split(linesInfo[1], cellseparator);
+	XYshift = split(linesInfo[2], cellseparator);
+	AngleShiftTime = split(linesInfo[3], cellseparator);
+	Scales = split(linesInfo[4], cellseparator);
+
+
+	// Build the checkbox list
+
+	nrow = minOf(16, Names.length - 1); // maximum 16 rows
+	ncol = -floor(-(Names.length - 1)/nrow);
+	n = nrow*ncol;
+	labels = newArray(n);
+	defaults = newArray(n);
+	i = 0;
+	for (c = 0; c < ncol; c++)
+		{
+		for (r = 0; r < nrow; r++)
+			{
+			j = r*ncol + c;
+			defaults[j] = false;
+			if (i < (Names.length - 1))
+				{
+				name = Names[1 + i];
+				time = parseFloat(AngleShiftTime[1+ (2*i) +1]);
+				labels[j] = name + " (" + round(10*time)/10 + " h)";
+				}
+			else
+				{
+				labels[j] = "(empty, do not tick)";
+				}
+			i = i + 1;
+			}
+		}	
+
+
+	// Ask user for the list of images and save
+
+	check_Images = "FALSE";
+	while (check_Images == "FALSE")
+		{
+		// Delete putative old file (just in case it was not deleted properly before)
+		File.delete("D:\\ImageList.txt");		
+		
+		// Open the dialog box for choice of the images
+		Dialog.create("Select images for division plot");
+		Dialog.addMessage("Select at least two images between which division will be plotted.\nIf only one image is selected, competence only, cell area or cell outlines will be plotted (as relevant).");
+		Dialog.addCheckbox("Use all images", false);
+		Dialog.addMessage(" \n");
+		Dialog.addCheckboxGroup(nrow, ncol, labels, defaults);
+		Dialog.addMessage(" \n");
+		Dialog.show();
+
+		// Get the images back
+		allImages = Dialog.getCheckbox();
+		if (allImages == 1)
+			{
+			f = File.open("D:\\ImageList.txt");
+			for (i = 0; i < (Names.length - 1); i++)
+				{
+				print(f, Names[1 + i]);
+				}
+			File.close(f);
+			check_Images = "TRUE";
+			}
+		else
+			{
+			countImages = 0;
+			isIncluded = newArray(Names.length - 1);
+			for (j = 0; j < n; j++)
+				{
+				img = Dialog.getCheckbox();
+				i = floor(nrow*j/n) + nrow*(j - ncol * floor(nrow*j/n));
+				if (img == 1 && i < (Names.length - 1))
+					{
+					isIncluded[i] = 1;
+					countImages = countImages + 1;
+					}
+				else if (img == 0 && i < (Names.length - 1))
+					{
+					isIncluded[i] = 0;
+					}
+				}
+			if (countImages >= 1)
+				{
+				if (countImages == 1)
+					{
+					Dialog.create("Warning");
+					Dialog.addMessage("Only one image has been selected.");
+					Dialog.addMessage("If 'Division and competence' or 'Competence only' is selected, only competence for division will be plotted on this image.");
+					Dialog.addMessage("If 'Cell progeny' is selected, the progeny of all cells will be plotted on this image.");
+					Dialog.addMessage("If 'Area of all cells' is selected, the area of all cells will be plotted on this image.");
+					Dialog.addMessage("Otherwise, only cell outlines will be plotted on this image.");
+					Dialog.show();
+					}
+				f = File.open("D:\\ImageList.txt");
+				for (i = 0; i < (Names.length -1); i++)
+					{
+					if (isIncluded[i] == 1)
+						{
+						print(f, Names[1 + i]);
+						}
+					}
+				File.close(f);
+				check_Images = "TRUE";
+				}
+			else
+				{
+				Dialog.create("Error");
+				Dialog.addMessage("At least one image need to be ticked. Select the images again.");
+				Dialog.show();
+				}
+			}
+		}
+
+
+/// Ask how to process divisions (at first use of the PointTracker csv file)
+
+	nameOfDivCSV = "Divisions\\Divisions__" + csvName;
+	if (File.exists(projDir + nameOfDivCSV) != 1)
+		{
+		Dialog.create("First use of the csv file");
+		Dialog.addMessage("This is the first time that the file '" + csvName + "' is used to plot division.\nA new file called 'Divisions__" + csvName + "' will be automatically computed.\nThis means that the macro will take longer to terminate (much longer for large datasets).");
+		Dialog.addMessage("You need to specify if divisions shall be processed from the first image that you selected by ticking the checkbox below.\nYou may wish to tick it if some cells are missing before the first selected image.\nIf unticked, the first image of the dataset will be used (recommended for standard, complete datasets).");
+		Dialog.addCheckbox("Use the first selected image to process divisions", false);
+		Dialog.show();		
+		ini = Dialog.getCheckbox();
+		if (ini == 1) { ini = "TRUE"; }; else { ini = "FALSE"; };
+		createDivCSV = "TRUE";
+		}
+	else
+		{
+		ini = "FALSE"; // Not used by R as the file already exists
+		createDivCSV = "FALSE";
+		}
+
+
+/// Get parameters
+
+	// Open the dialog box of the parameters
+
+	BooleanOrMissing = newArray("Let the software decide", "Yes", "No");
+	Dialog.create("Choose parameters");
+	
+	Dialog.setInsets(0, 0, 0);
+	Dialog.addMessage("###########################################  GENERAL  ###########################################");
+	Dialog.addString("Scale bar in microns (keep BLANK to ignore scale bar):","");	
+	Dialog.setInsets(0, 20, 0);
+	Dialog.addCheckboxGroup(1, 3, newArray("Plot on end image", "Black background", "Draw ticks for scale bar (if any)"), newArray(true, true, false));
+	Dialog.addCheckbox("Fit all images to the dimensions of the last image (Y-axis limits below will be ignored)", false);
+	Dialog.addString("Enter minimum for the Y-axis (in microns, possibly negative) (keep BLANK if unknown):", "");
+	Dialog.addString("AND maximum for the Y-axis (in microns) (keep BLANK if unknown):", "");
+	
+	Dialog.addRadioButtonGroup("Use leaf outline", BooleanOrMissing, 1, 3, "Let the software decide");
+	Dialog.addCheckbox("Align to petiole-lamina boundary", true);
+	Dialog.addString("Cell # at petiole-lamina boundary (keep BLANK if lowest tracked cell):","");
+	Dialog.addString("Mean angle (°) the leaf should be rotated to be vertical (keep BLANK if drawn leaf outlines):","");
+
+	Dialog.setInsets(0, 0, 0);
+	Dialog.addMessage("###########################################   DIVISION   ###########################################");
+	Dialog.addChoice("Division variable:", newArray("Division and competence", "Division only", "Competence only", "Cell progeny", "Area of all cells", "Cell area at division", "Symmetry of division", "Duration of cell cycle", "Number of divisions"));
+	Dialog.addCheckbox("Show legend or colour bar", true);
+	Dialog.addCheckbox("Show cell number", false);
+	Dialog.show();
+
+
+	// Get the values back and transform them to match R script's requirements
+
+	error_scaleBar = "FALSE";
+	error_ylim = "FALSE";
+	check_ymini = "FALSE";
+	check_ymaxi = "FALSE";
+	error_cellAtPetioleLaminaBoundary = "FALSE";
+	error_meanAngle = "FALSE";
+
+	scaleBar = Dialog.getString();
+	if (replace(scaleBar, " ", "") == "") { scaleBar = "NULL"; }; else { scaleBar = parseFloat(scaleBar); if (isNaN(scaleBar)) { error_scaleBar = "TRUE"; }; };
+	after = Dialog.getCheckbox();
+	if (after == 0) { before = "TRUE"; }; else { before = "FALSE"; };
+	black = Dialog.getCheckbox();
+	if (black == 1) { black = "TRUE"; }; else { black = "FALSE"; };
+	tick = Dialog.getCheckbox();
+	if (tick == 1) { tick = "TRUE"; }; else { tick = "FALSE"; };
+	fitLast = Dialog.getCheckbox();
+	if (fitLast == 1) { fitLast = "TRUE"; }; else { fitLast = "FALSE"; };
+	ymini = Dialog.getString();
+	if (replace(ymini, " ", "") == "") { ymini = "NULL"; check_ymini = "TRUE"; }; else { ymini = parseFloat(ymini); if (isNaN(ymini)) { error_ylim = "TRUE"; }; };
+	ymaxi = Dialog.getString();
+	if (replace(ymaxi, " ", "") == "") { ymaxi = "NULL"; check_ymaxi = "TRUE"; }; else { ymaxi = parseFloat(ymaxi); if (isNaN(ymaxi)) { error_ylim = "TRUE"; }; };
+	if (check_ymini != check_ymaxi) { error_ylim = "TRUE"; };
+	if (fitLast == "TRUE") { ymini = "NULL";  ymaxi = "NULL"; error_ylim = "FALSE"; };
+
+	leafShape = Dialog.getRadioButton();
+	if (leafShape == "Let the software decide") { leafShape = "NULL"; } else if (leafShape == "Yes") { leafShape = "TRUE"; } else if (leafShape == "No") { leafShape = "FALSE"; };
+	alignToPetioleLaminaBoundary = Dialog.getCheckbox();
+	if (alignToPetioleLaminaBoundary == 1) { alignToPetioleLaminaBoundary = "TRUE"; }; else { alignToPetioleLaminaBoundary = "FALSE"; };
+	cellAtPetioleLaminaBoundary = Dialog.getString();
+	if (replace(cellAtPetioleLaminaBoundary, " ", "") == "") { cellAtPetioleLaminaBoundary = "NULL"; }; else { cellAtPetioleLaminaBoundary = parseFloat(cellAtPetioleLaminaBoundary); if (isNaN(cellAtPetioleLaminaBoundary)) { error_cellAtPetioleLaminaBoundary = "TRUE"; }; else if (cellAtPetioleLaminaBoundary != round(cellAtPetioleLaminaBoundary)) { error_cellAtPetioleLaminaBoundary = "TRUE"; }; };			
+	meanAngle = Dialog.getString();
+	if (replace(meanAngle, " ", "") == "") { meanAngle = "NULL"; }; else { meanAngle = parseFloat(meanAngle); if (isNaN(meanAngle)) { error_meanAngle = "TRUE"; }; };
+
+	divParameter = Dialog.getChoice();
+	growthScale = Dialog.getCheckbox();
+	if (growthScale == 1) { growthScale = "TRUE"; }; else { growthScale = "FALSE"; };
+	showCellNumber = Dialog.getCheckbox();
+	if (showCellNumber == 1) { showCellNumber = "TRUE"; }; else { showCellNumber = "FALSE"; };
+
+	// Check potential errors
+
+	while (error_scaleBar == "TRUE")
+		{
+		error_scaleBar = "FALSE";
+		Dialog.create("Error, please correct");
+		Dialog.addMessage("The scale bar should be either missing or given as a numeric values in microns.");
+		Dialog.addString("Scale bar in microns (keep BLANK to ignore scale bar):","");
+		Dialog.show();
+		scaleBar = Dialog.getString();
+		if (replace(scaleBar, " ", "") == "") { scaleBar = "NULL"; }; else { scaleBar = parseFloat(scaleBar); if (isNaN(scaleBar)) { error_scaleBar = "TRUE"; }; };
+		}
+
+	while (error_ylim == "TRUE")
+		{
+		error_ylim = "FALSE";
+		check_ymini = "FALSE";
+		check_ymaxi = "FALSE";
+		Dialog.create("Error, please correct");
+		Dialog.addMessage("The limits for the Y-axis should be either missing or given as two numeric values.");
+		Dialog.addString("Enter minimum for the Y-axis (in microns, possibly negative) (keep BLANK if unknown):", "");
+		Dialog.addString("AND maximum for the Y-axis (in microns) (keep BLANK if unknown):", "");
+		Dialog.show();
+		ymini = Dialog.getString();
+		if (replace(ymini, " ", "") == "") { ymini = "NULL"; check_ymini = "TRUE"; }; else { ymini = parseFloat(ymini); if (isNaN(ymini)) { error_ylim = "TRUE"; }; };
+		ymaxi = Dialog.getString();
+		if (replace(ymaxi, " ", "") == "") { ymaxi = "NULL"; check_ymaxi = "TRUE"; }; else { ymaxi = parseFloat(ymaxi); if (isNaN(ymaxi)) { error_ylim = "TRUE"; }; };
+		if (check_ymini != check_ymaxi) { error_ylim = "TRUE"; };
+		}
+	if (ymini == parseFloat(ymini)) { if (ymini > ymaxi) { ymini_temp = ymini; ymini = ymaxi; ymaxi = ymini_temp; }; };
+
+	while (error_cellAtPetioleLaminaBoundary == "TRUE")
+		{
+		error_cellAtPetioleLaminaBoundary = "FALSE";
+		Dialog.create("Error, please correct");
+		Dialog.addMessage("The cell at the petiole-lamina boundary should be either missing or given as an integer corresponding to an existing cell.");
+		Dialog.addString("Cell # at petiole-lamina boundary (keep BLANK if lowest tracked cell):","");
+		Dialog.show();
+		cellAtPetioleLaminaBoundary = Dialog.getString();
+		if (replace(cellAtPetioleLaminaBoundary, " ", "") == "") { cellAtPetioleLaminaBoundary = "NULL"; }; else { cellAtPetioleLaminaBoundary = parseFloat(cellAtPetioleLaminaBoundary); if (isNaN(cellAtPetioleLaminaBoundary)) { error_cellAtPetioleLaminaBoundary = "TRUE"; }; else if (cellAtPetioleLaminaBoundary != round(cellAtPetioleLaminaBoundary)) { error_cellAtPetioleLaminaBoundary = "TRUE"; }; };
+		}	
+	
+	while (error_meanAngle == "TRUE")
+		{
+		error_meanAngle = "FALSE";
+		Dialog.create("Error, please correct");
+		Dialog.addMessage("The angle the leaf will be rotated to be vertical (averaged across all images of the project)\nshould be either missing or given as a numeric values in degrees.");
+		Dialog.addString("Mean angle (°) the leaf should be rotated to be vertical (keep BLANK if drawn leaf outlines):",""); 
+		Dialog.show();
+		meanAngle = Dialog.getString();
+		if (replace(meanAngle, " ", "") == "") { meanAngle = "NULL"; }; else { meanAngle = parseFloat(meanAngle); if (isNaN(meanAngle)) { error_meanAngle = "TRUE"; }; };
+		}
+
+
+	// Parameters for the colour scale (if required)
+
+	if (divParameter == "Area of all cells" || ((divParameter == "Cell area at division" || divParameter == "Symmetry of division" || divParameter == "Duration of cell cycle" || divParameter == "Number of divisions") && countImages > 1))
+		{
+		// Open the dialog box of the parameters specific to the colour scale
+	
+		Dialog.create("Choose parameters for the colour bar");
+		//Dialog.addRadioButtonGroup("Colour palette", newArray("GFtbox", "Blue to red"), 1, 2, "GFtbox");
+		Dialog.addString("Enter minimum for '" + divParameter + "' (keep BLANK if unknown):", "");
+		Dialog.addString("AND maximum for '" + divParameter + "' (keep BLANK if unknown):", "");
+		Dialog.addCheckbox("Use rounded limits (ignored if mini and maxi provided)", true);
+		Dialog.addCheckbox("Set '" + divParameter + "' to colour of minimum when below minimum (if unticked: transparent)", true);
+		Dialog.addCheckbox("Set '" + divParameter + "' to colour of maximum when above maximum (if unticked: transparent)", true);
+		if (growthScale == "TRUE")
+			{
+			Dialog.addCheckbox("Draw intermediate ticks on the colour bar", true);
+			Dialog.addString("Text for the colour bar (keep BLANK to let the software decide):","");
+			}
+		Dialog.show();
+
+
+		// Get the values back and transform them to match R script's requirements
+
+		error_zlim = "FALSE";
+		check_zmini = "FALSE";
+		check_zmaxi = "FALSE";
+
+		Palette = "GFtbox"; //Palette = Dialog.getRadioButton();
+		if (Palette == "GFtbox") { colorPaletteOfGFtbox = "TRUE"; } else { colorPaletteOfGFtbox = "FALSE"; };
+		zmini = Dialog.getString();
+		if (replace(zmini, " ", "") == "") { zmini = "NULL"; check_zmini = "TRUE"; }; else { zmini = parseFloat(zmini); if (isNaN(zmini)) { error_zlim = "TRUE"; }; };
+		zmaxi = Dialog.getString();
+		if (replace(zmaxi, " ", "") == "") { zmaxi = "NULL"; check_zmaxi = "TRUE"; }; else { zmaxi = parseFloat(zmaxi); if (isNaN(zmaxi)) { error_zlim = "TRUE"; }; };
+		if (check_zmini != check_zmaxi) { error_zlim = "TRUE"; };
+		roundzlim = Dialog.getCheckbox();
+		if (roundzlim == 1) { roundzlim = "TRUE"; }; else { roundzlim = "FALSE"; };
+		fixmin = Dialog.getCheckbox();
+		if (fixmin == 1) { fixmin = "TRUE"; }; else { fixmin = "FALSE"; };
+		fixmax = Dialog.getCheckbox(); 
+		if (fixmax == 1) { fixmax = "TRUE"; }; else { fixmax = "FALSE"; };
+		if (growthScale == "TRUE")
+			{
+			drawTicks = Dialog.getCheckbox();
+			if (drawTicks == 1) { drawTicks = "TRUE"; }; else { drawTicks = "FALSE"; };
+			txtlegend = Dialog.getString();
+			if (replace(txtlegend, " ", "") == "") { txtlegend = "NULL"; };
+			}
+		else
+			{
+			drawTicks = "TRUE";
+			txtlegend = "NULL";
+			}
+
+
+		// Check potential errors
+
+		while (error_zlim == "TRUE")
+			{
+			error_zlim = "FALSE";
+			check_zmini = "FALSE";
+			check_zmaxi = "FALSE";
+			Dialog.create("Error, please correct");
+			Dialog.addMessage("The limits for '" + divParameter + "' should be either missing or given as two numeric values.");
+			Dialog.addString("Enter minimum for '" + divParameter + "' (keep BLANK if unknown):", "");
+			Dialog.addString("AND maximum for '" + divParameter + "' (keep BLANK if unknown):", "");
+			Dialog.show();
+			zmini = Dialog.getString();
+			if (replace(zmini, " ", "") == "") { zmini = "NULL"; check_zmini = "TRUE"; }; else { zmini = parseFloat(zmini); if (isNaN(zmini)) { error_zlim = "TRUE"; }; };
+			zmaxi = Dialog.getString();
+			if (replace(zmaxi, " ", "") == "") { zmaxi = "NULL"; check_zmaxi = "TRUE"; }; else { zmaxi = parseFloat(zmaxi); if (isNaN(zmaxi)) { error_zlim = "TRUE"; }; };
+			if (check_zmini != check_zmaxi) { error_zlim = "TRUE"; };
+			}
+		if (zmini == parseFloat(zmini)) { if (zmini > zmaxi) { zmini_temp = zmini; zmini = zmaxi; zmaxi = zmini_temp; }; };
+		}
+	
+	else // if 'div&comp', 'div', 'comp' or 'progeny', assign colour scale parameters that won't be used, though required for the file standard
+		{
+		colorPaletteOfGFtbox = "TRUE";
+		zmini = "NULL";
+		zmaxi = "NULL";
+		roundzlim = "TRUE";
+		fixmin = "TRUE";
+		fixmax = "TRUE";
+		drawTicks = "TRUE";
+		txtlegend = "NULL";
+		}
+
+
+	// Change name of 'divParameter' for R
+
+	if (divParameter == "Division and competence") { divParameter = "div&comp"; }
+	else if (divParameter == "Division only") { divParameter = "div"; }
+	else if (divParameter == "Competence only") { divParameter = "comp"; }
+	else if (divParameter == "Cell progeny") { divParameter = "progeny"; }
+	else if (divParameter == "Area of all cells") { divParameter = "CellArea"; }
+	else if (divParameter == "Cell area at division") { divParameter = "Area_At_Division"; }
+	else if (divParameter == "Symmetry of division") { divParameter = "Symmetry"; }
+	else if (divParameter == "Duration of cell cycle") { divParameter = "Cell_Cycle_Duration"; }
+	else if (divParameter == "Number of divisions") { divParameter = "Number_Of_Divisions"; };
+
+
+	// Save parameters in a txt file
+
+	File.delete("D:\\Parameters.txt")
+	f = File.open("D:\\Parameters.txt");
+	print(f, projDir);
+	print(f, csvFile);
+	print(f, meanAngle);
+	print(f, alignToPetioleLaminaBoundary);
+	print(f, cellAtPetioleLaminaBoundary);
+	print(f, leafShape);
+	print(f, before);
+	print(f, divParameter);
+	print(f, black);
+	print(f, ymini);
+	print(f, ymaxi);
+	print(f, scaleBar);
+	print(f, tick);
+	print(f, roundzlim);
+	print(f, zmini);
+	print(f, zmaxi);
+	print(f, fixmin);
+	print(f, fixmax);
+	print(f, colorPaletteOfGFtbox);
+	print(f, growthScale);
+	print(f, drawTicks);
+	print(f, txtlegend);
+	print(f, fitLast);
+	print(f, ini);
+	print(f, showCellNumber);
+	File.close(f);
+
+
+/// Get the grahical output
+
+	// Delete putative old files (just in case they were not deleted properly before)
+	File.delete("D:\\count_img.txt");
+	File.delete("D:\\" + nameOfRoutFile);
+	File.delete("D:\\" + nameOfRScript);
+	File.delete("D:\\Track_n_R.r");
+	
+	// Copy the R scripts to the 'D:\' drive (required because the javascript cannot read files in directory containing a space character)
+	File.copy(pathOfScripts + nameOfRScript, "D:\\" + nameOfRScript);
+	File.copy(pathOfScripts + "Track_n_R.r", "D:\\Track_n_R.r");
+
+	// Run the java script that calls R (do not forget the "[" and "]" to allow space character in the path of the javascript)
+	run("Run...", "run=" + "[" + pathOfScripts + nameOfJavaScript + "]");
+
+
+/// Terminate macro
+
+	// Check if the R script has finished properly
+	endOfMacro = 0;
+	while (endOfMacro == 0)
+		{
+		endOfMacro = File.exists("D:\\count_img.txt");
+		if (endOfMacro == 0 && File.exists("D:\\" + nameOfRoutFile) == 1) 
+			{
+			wait(2000);
+			linesRout = split(File.openAsString("D:\\" + nameOfRoutFile), lineseparator);
+			if (linesRout.length > 0)
+				{
+				cellsRout = split(linesRout[linesRout.length - 1], cellseparator);
+				if (cellsRout.length > 0)
+					{
+					if (cellsRout[0] == "Execution halted")
+						{
+						macroAbort = "not aborted yet";
+						while (macroAbort == "not aborted yet")
+							{
+							Dialog.create("Macro error");
+							Dialog.addMessage("The macro could not finished properly.\n \nCheck the file 'D:\\" + nameOfRoutFile + "' for more details.\n \n Press 'Cancel' to abort the macro.");
+							Dialog.show();
+							}
+						}
+					}
+				}
+			}
+		}
+
+	// Get the count of processed images
+	count_img = split(File.openAsString("D:\\count_img.txt"),"\n");
+	count_img = count_img[0];
+
+	// Delete unwanted files
+	File.delete("D:\\count_img.txt");
+	File.delete("D:\\Parameters.txt");
+	File.delete("D:\\ImageList.txt");
+	File.delete("D:\\" + nameOfRoutFile);
+	File.delete("D:\\" + nameOfRScript);
+	File.delete("D:\\Track_n_R.r");
+
+	// Close Log
+	if (isOpen("Log"))
+		{
+		selectWindow("Log");
+     		run('Close');
+		} 
+
+	// Confirm to user
+	Dialog.create("End of macro");
+	if (count_img == 1) { display_count = count_img + " image has "; } else { display_count = count_img + " images have "; };
+	Dialog.addMessage("*** FINISHED ***\n \n" + display_count + "been generated in\n" + projDir + "\Graphical Outputs");
+	if (createDivCSV == "TRUE") { Dialog.addMessage("A file 'Divisions__" + csvName + "' has also been generated in the subfolder 'Divisions',\nwhich contains a description of all cell divisions."); };
+	Dialog.show();

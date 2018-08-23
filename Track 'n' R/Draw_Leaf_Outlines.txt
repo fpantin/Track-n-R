@@ -1,0 +1,184 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////																////
+////		This ImageJ macro assists the user in drawing leaf outline of images used in PointTracker.		////
+////	Outlines can be used in R, to generate the splines of the leaf maps representing data of PointTracker.	////
+////																////
+////							Florent Pantin, 2013							////
+////																////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Initial settings
+
+	// Set the csv file and the directory containing the project
+	csvFile = File.openDialog("Select the csv file containing raw data");
+	csvName = File.getName(csvFile);
+	csvPath = substring(csvFile, 0, indexOf(csvFile, csvName));
+	idx_Data = indexOf(csvPath, "Data\\");
+	if (idx_Data != -1) { projDir = substring(csvFile, 0, idx_Data); } else { projDir = "error"; };
+	while ((endsWith(csvFile, ".csv") != 1) || (projDir + "Data\\" + csvName != csvFile))
+		{
+		Dialog.create("Error");
+		Dialog.addMessage("The file should be a CSV file located in the 'Data\' folder of the project directory.\nSelect the csv file again.");
+		Dialog.show();
+		csvFile = File.openDialog("Select the csv file containing raw data");
+		csvName = File.getName(csvFile);
+		csvPath = substring(csvFile, 0, indexOf(csvFile, csvName));
+		idx_Data = indexOf(csvPath, "Data\\");
+		if (idx_Data != -1) { projDir = substring(csvFile, 0, idx_Data); }	else { projDir = "error"; };
+		}
+
+	// Find images
+	inImage =  projDir + "Processed\\";
+	inImageList = getFileList(inImage);
+
+	// Set the output directory
+	outLeafShape =  projDir + "Leaf Shape\\";
+	if (File.exists(outLeafShape) != 1)
+		{
+		File.makeDirectory(outLeafShape);
+		}
+
+	// Set file separators
+	lineseparator = "\n";
+	cellseparator = ",";
+
+	// Get the image information
+	linesInfo = split(File.openAsString(csvFile), lineseparator);
+	Names = split(linesInfo[1], cellseparator);
+	XYshift = split(linesInfo[2], cellseparator);
+	AngleShiftTime = split(linesInfo[3], cellseparator);
+	Scales = split(linesInfo[4], cellseparator);
+
+	// Set tool Polygon
+	setTool("polygon");
+
+
+/// Loop on each image
+
+for (i = 0; i < (Names.length-1); i++) 
+	{
+
+	// Get image name
+	name = Names[1+i]; // Warning: blank cells were ignored when the line has been imported
+	nameWithoutExtension = substring(name, 0, lengthOf(name) - 4);
+
+	// Warning:
+	//	The following executes only if the image has not already been done.
+	//          If the user wants to re-draw leaf outline on this image for any reason,
+	//	the user needs to delete the former related .txt file manually.
+
+	if (File.exists(outLeafShape + nameWithoutExtension + ".txt") != 1)
+		{
+		// Get image information
+		//angleShift = -parseFloat(AngleShiftTime[1+(2*i)]); 	// not used
+		//time = parseFloat(AngleShiftTime[1+(2*i)+1]);		// not used
+		//scaleX = parseFloat(Scales[1+(2*i)]); 			// not used
+		//scaleY = parseFloat(Scales[1+(2*i)+1]); 			// not used
+		//shiftX = parseFloat(XYshift[1+(2*i)]); 			// not used
+		//shiftY = parseFloat(XYshift[1+(2*i)+1]); 			// not used
+
+		// Open image
+		idx = 0; 
+		while(name != inImageList[idx])
+			{
+			idx = idx + 1;		
+			}
+		inputPath = inImage + inImageList[idx];
+		open(inputPath);
+
+		// Rotate and rotate back to enlarge the margins (in case leaf outline exceeds image dimensions)
+			
+			// Initial state
+			originX = 0;
+			originY = 0;
+
+			// Forward rotation
+			ImageProp = split(getImageInfo(), "\n");
+			//width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+			height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+			run("Rotate... ", "angle=" + 45 + " grid=1 interpolation=Bilinear  enlarge");
+			originXrotated = originX * cos(-45 * PI/180) + originY * sin(-45 * PI/180);
+			originYrotated = -originX * sin(-45 * PI/180) + originY * cos(-45 * PI/180);
+			originXrotated += height * sin(45 * PI/180);
+
+			// Backward rotation
+			ImageProp = split(getImageInfo(), "\n");
+			width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+			//height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+			run("Rotate... ", "angle=" + -45 + " grid=1 interpolation=Bilinear  enlarge");
+			originX = originXrotated * cos(45 * PI/180) + originYrotated * sin(45 * PI/180);
+			originY = -originXrotated * sin(45 * PI/180) + originYrotated * cos(45 * PI/180);
+			originY += width * sin(45 * PI/180);
+
+			// Set new origin (Warning: not taken into account when saved as XY coordinates)
+			run("Properties...", "origin=" + originX + "," + originY);
+
+
+		// Set scale (not run)
+		//run("Set Scale...", "distance=" + 1 + " known=" + scaleX *1e6 + " pixel=" + scaleY/scaleX + " unit=um");
+
+		// Prompt user to draw leaf outline starting with the petiole
+		numberOfROIs = roiManager("Count");
+		if (numberOfROIs != 0)
+			{
+			selectWindow("ROI Manager");
+			run("Close");
+			numberOfROIs = roiManager("Count");
+			}
+		while (numberOfROIs != 1)
+			{
+			waitForUser("Drawing leaf outline", "Draw leaf outline using the polygon tool.\nPress [t] to add to the RoiManager.\nPress OK when finished.\n \n*** WARNING ***\nThe two first points must form the petiole base.");
+			numberOfROIs = roiManager("Count");
+			if (numberOfROIs != 1)
+				{
+				Dialog.create("Error");
+				Dialog.addMessage("Leaf outline should be one ROI.");
+				Dialog.show();
+				}
+			}
+
+		// Save polygon coordinates in a txt file
+		roiManager("select", 0)
+		saveAs("XY Coordinates", outLeafShape + nameWithoutExtension + ".txt");
+		selectWindow("ROI Manager");
+		run("Close");
+
+		// Correct for origin shift and save again
+		linesVert = split(File.openAsString(outLeafShape + nameWithoutExtension + ".txt"), lineseparator);
+		X = newArray(linesVert.length);
+		Y = newArray(linesVert.length);
+		for (v = 0; v < linesVert.length; v++)
+			{
+			vert = split(linesVert[v], "\t");
+			x = parseFloat(vert[0]);
+			y = parseFloat(vert[1]);
+			x -= originX; //  * scaleX;
+			y -= originY; //  * scaleY;
+			X[v] = x;
+			Y[v] = y;	
+			}
+		File.delete(outLeafShape + nameWithoutExtension + ".txt")
+		f = File.open(outLeafShape + nameWithoutExtension + ".txt");
+		for (v = 0; v < linesVert.length; v++)
+			{
+			print(f, X[v] + "\t" + Y[v]);
+			}
+		File.close(f);
+
+		// Close image
+		selectWindow(name);
+		close();
+		}
+	}
+
+/// Close Log
+if (isOpen("Log"))
+	{
+	selectWindow("Log");
+     	run('Close');
+	} 
+
+/// Terminate macro
+Dialog.create("End of macro");
+Dialog.addMessage("*** FINISHED ***\nTo re-open an outline, open the image and use 'File > Import > XY Coordinates...' to open the txt file.\nTo correct it, modify the polygon, add to RoiManager and use 'File > Save As > XY Coordinates...' to save the outline.\n(NB: This will NOT work if the outline exceeds the image dimensions)");
+Dialog.show();

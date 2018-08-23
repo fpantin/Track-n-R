@@ -1,0 +1,288 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////																////
+////				This ImageJ macro creates a montage of a lineage of cells.				////
+////					It is called by the R script 'Analyze_Lineages.r'.					////
+////																////
+////							Florent Pantin, 2013							////
+////																////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Initial settings
+
+	// Set width of the drawn vertices (pixels of the last image)
+	vertWidth = 4;
+
+	// Set the bounding box (meters that will bound the cropping area around each face of the cell)
+	bb = 15e-6;
+
+	// Set centroid as measurement
+	run("Set Measurements...", "  centroid redirect=None decimal=3");
+	
+	// Set file separators
+	lineseparator = "\n";
+	cellseparator = "\t";
+
+	// Retrieve project directory
+	linesRparam = split(File.openAsString("D:\\Parameters.txt"), lineseparator);
+	projDir = split(linesRparam[0], cellseparator);
+	projDir = projDir[0];
+
+	// Set the directory containing the images and find images
+	inImage = projDir + "Processed\\";
+	//inImageList = getFileList(inImage);
+	linesInImageList = split(File.openAsString("D:\\ImageList.txt"), lineseparator);
+	inImageList = newArray(linesInImageList.length);
+	for (i = 0; i < linesInImageList.length; i++)
+		{
+		img = split(linesInImageList[i], cellseparator);
+		inImageList[i] = img[0];
+		}
+
+	// Set the directory containing the coordinates ('outputDir' in the R script)
+	Coord = "D:\\CellCoord_temp\\";
+
+	// Get the image information
+	linesInfo = split(File.openAsString(Coord + "Image_Info.txt"), lineseparator);
+
+	// Get the montage information
+	linesMontage = split(File.openAsString(Coord + "Montage_Info.txt"), lineseparator);
+	cellsMontage = split(linesMontage[0], cellseparator);
+	meanAngle = -parseFloat(cellsMontage[0]);
+	ncol = parseFloat(cellsMontage[1]);
+	nrow = parseFloat(cellsMontage[2]);
+	mainPlot = substring(cellsMontage[3], 1, lengthOf(cellsMontage[3]) - 1);
+	displayVertices = cellsMontage[4];
+
+	// Get the movie information
+	makeAVI = cellsMontage[5];
+	compr = substring(cellsMontage[6], 1, lengthOf(cellsMontage[6]) - 1);
+	fps = parseFloat(cellsMontage[7]);
+
+
+/// Open and close the last image (largest cell) to find the bounding box
+
+	// Get index of the last image
+	i =  linesInfo.length - 1;
+
+	// Get image information
+	info = split(linesInfo[i], cellseparator);
+	idx = info[0];
+	AngleShift = -parseFloat(info[1]);
+	AngleShift += meanAngle;
+	scaleXmax = parseFloat(info[2]);
+	scaleYmax = parseFloat(info[3]);
+
+	// Open image
+	//inputPath = inImage + inImageList[idx-1]; //// Warning: do not forget that Imagej's indexation starts at 0, by contrast with R!
+	inputPath = inImage + inImageList[inImageList.length - 1];
+	open(inputPath);
+	name = getTitle();
+
+	// Get width and height
+	ImageProp = split(getImageInfo(), "\n");
+	width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+	height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+
+	// (Additional step because for some angle values, lateral or proximodistal bands are added during the rotation)
+	run("Rotate... ", "angle=" + AngleShift + " grid=1 interpolation=Bilinear  enlarge");
+	rotImageProp = split(getImageInfo(), "\n");
+	rotWidth = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+	rotHeight = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+	rotWidthExpected = width*cos(abs(AngleShift * PI/180)) + height*sin(abs(AngleShift * PI/180)); // if lateral margins are not created
+	rotHeightExpected = height*cos(abs(AngleShift * PI/180)) + width*sin(abs(AngleShift * PI/180)); // if proximodistal margins are not created
+	xDif = rotWidth - rotWidthExpected;
+	yDif = rotHeight - rotHeightExpected;
+	centroXrotated += xDif/2;
+	centroYrotated += yDif/2;
+
+	// Close image
+	selectWindow(name);
+	close();
+
+	// Import vertices
+	linesVert = split(File.openAsString(Coord + "cell_XY_max.txt"), lineseparator);
+	X = newArray(linesVert.length);
+	Y = newArray(linesVert.length);
+
+	// Loop on each vertex	
+	for (v = 0; v < linesVert.length; v++) 
+		{
+		vert = split(linesVert[v], cellseparator);
+		x = parseFloat(vert[0]);
+		y = parseFloat(vert[1]);
+		xrot = x * cos(-AngleShift * PI/180) + y * sin(-AngleShift * PI/180);
+		yrot = -x * sin(-AngleShift * PI/180) + y * cos(-AngleShift * PI/180);
+		// and because the image will be enlarged during the rotation:
+		if (AngleShift < 0)
+			{
+			yrot += width * sin(-AngleShift * PI/180); // need to shift in y
+			}
+		else
+			{
+			xrot += height * sin(AngleShift * PI/180); // need to shift in x			
+			}
+		X[v] = xrot;
+		Y[v] = yrot;
+		}
+
+	// Find the maximum dimensions (pixels)
+	Array.getStatistics(X, minX, maxX, meanX, stdDevX);
+	Array.getStatistics(Y, minY, maxY, meanY, stdDevY);
+	bx = maxX - minX;
+	by = maxY - minY;
+	
+
+/// Loop on each image
+
+for (i = 0; i < linesInfo.length; i++)
+	{
+	// Get image information
+	info = split(linesInfo[i], cellseparator);
+	idx = info[0];
+	AngleShift = -parseFloat(info[1]);
+	AngleShift += meanAngle;
+	scaleX = parseFloat(info[2]);
+	scaleY = parseFloat(info[3]);
+	shiftX = parseFloat(info[4]);
+	shiftY = parseFloat(info[5]);
+	//isMother = info[6];
+	//isDaughter = info[7];
+	R = parseFloat(info[12]);
+	G = parseFloat(info[13]);
+	B = parseFloat(info[14]);
+	if (mainPlot == "TIME")
+		{
+		ImageID = substring(info[9], 1, lengthOf(info[9]) - 1) + ".png"; // time
+		}
+	else if (mainPlot == "NUMBER")
+		{
+		ImageID = idx + ".png"; // image number in the list of the processed images
+		}
+	else
+		{
+		ImageID = substring(info[8], 1, lengthOf(info[8]) - 1); // actual image name
+		}
+
+	// Open image
+	//inputPath = inImage + inImageList[idx-1]; //// Warning: do not forget that Imagej's indexation starts at 0, by contrast with R!
+	inputPath = inImage + inImageList[i];
+	open(inputPath);
+	rename(ImageID);
+	run("RGB Color");
+	
+	// Get width and height
+	ImageProp = split(getImageInfo(), "\n");
+	width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+	height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+
+	// Set a color for drawing vertices
+	setForegroundColor(R, G, B);
+
+	// Import vertices
+	linesVert = split(File.openAsString(Coord + "cell_XY_" + idx + ".txt"), lineseparator);
+	X = newArray(linesVert.length);
+	Y = newArray(linesVert.length);
+
+	// Loop on each vertex to draw vertices and store their coordinates in the arrays X and Y	
+	for (v = 0; v < linesVert.length; v++) 
+		{
+		vert = split(linesVert[v], cellseparator);
+		X[v] = parseFloat(vert[0]);
+		Y[v] = parseFloat(vert[1]);
+		makeOval(X[v] - (vertWidth*scaleXmax/scaleX)/2, Y[v] - (vertWidth*scaleYmax/scaleY)/2, vertWidth*scaleXmax/scaleX, vertWidth*scaleYmax/scaleY);
+		if (displayVertices == "TRUE") { run("Fill", "slice"); };
+		}
+
+	// Measure centroid
+	makeSelection("polygon", X, Y);
+	roiManager("Add");
+	roiManager("Measure");
+	centroX = getResult("X", 0);
+	centroY = getResult("Y", 0);
+	run("Clear Results");	
+	//selectWindow("Results");	
+	//run("Close");
+
+	// Discard ROIs
+	roiManager("Deselect");
+	roiManager("Show All");
+	roiManager("Show None");	
+	roiManager("Delete");
+	//selectWindow("ROI Manager");
+	//run("Close");
+
+	// Set scale (should be done AFTER centroid has been measured in pixels)
+	selectWindow(ImageID);
+	run("Set Scale...", "distance=" + 1 + " known=" + scaleX *1e6 + " pixel=" + scaleY/scaleX + " unit=um");
+
+	// Rotate and compute the new centroid coordinates
+	run("Rotate... ", "angle=" + AngleShift + " grid=1 interpolation=Bilinear  enlarge");
+	centroXrotated = centroX * cos(-AngleShift * PI/180) + centroY * sin(-AngleShift * PI/180);
+	centroYrotated = -centroX * sin(-AngleShift * PI/180) + centroY * cos(-AngleShift * PI/180);
+	// and because the image has been enlarged during the rotation:
+	if (AngleShift < 0)
+		{
+		centroYrotated += width * sin(-AngleShift * PI/180); // need to shift in y
+		}
+	else
+		{
+		centroXrotated += height * sin(AngleShift * PI/180); // need to shift in x
+		}
+
+	// (Additional step because for some angle values, lateral or proximodistal bands are added during the rotation)
+	rotImageProp = split(getImageInfo(), "\n");
+	rotWidth = parseFloat(substring(rotImageProp[2], indexOf(rotImageProp[2], "(") + 1, indexOf(rotImageProp[2], ")")));
+	rotHeight = parseFloat(substring(rotImageProp[3], indexOf(rotImageProp[3], "(") + 1, indexOf(rotImageProp[3], ")")));
+	rotWidthExpected = width*cos(abs(AngleShift * PI/180)) + height*sin(abs(AngleShift * PI/180)); // if lateral margins are not created
+	rotHeightExpected = height*cos(abs(AngleShift * PI/180)) + width*sin(abs(AngleShift * PI/180)); // if proximodistal margins are not created
+	xDif = rotWidth - rotWidthExpected;
+	yDif = rotHeight - rotHeightExpected;
+	centroXrotated += xDif/2;
+	centroYrotated += yDif/2;
+	
+	// Crop
+	x0 = centroXrotated - (2*bb + bx*scaleXmax)/scaleX/2;
+	y0 = centroYrotated - (2*bb + by*scaleYmax)/scaleY/2;
+	w = (2*bb + bx*scaleXmax)/scaleX;
+	h = (2*bb + by*scaleYmax)/scaleY;
+	makeRectangle(x0, y0, w, h);
+	run("Crop");
+
+	// Resize
+	if (i == 0)
+		{
+		ImageProp = split(getImageInfo(), "\n");
+		setWidth = parseFloat(substring(ImageProp[2], indexOf(ImageProp[2], "(") + 1, indexOf(ImageProp[2], ")")));
+		setHeight = parseFloat(substring(ImageProp[3], indexOf(ImageProp[3], "(") + 1, indexOf(ImageProp[3], ")")));
+		}
+	else
+		{
+		run("Size...", "width=" + setWidth + " height=" + setHeight + " constrain average interpolation=Bilinear");
+		}
+	}
+
+
+/// Make a montage
+
+//ncol = 6;
+//nrow = -floor(-linesInfo.length/ncol);
+run("Images to Stack", "method=[Copy (center)] name=Stack title=[] use");
+
+if (makeAVI == "TRUE")
+	{
+	run("AVI... ", "compression=" + compr + " frame=" + fps + " save=" +  projDir + "Lineages\\Montage.avi");
+	}
+
+if (mainPlot == "NULL")
+	{
+	run("Make Montage...", "columns=" + ncol + " rows=" + nrow + " scale=1 first=1 last=" + linesInfo.length + " increment=1 border=10 font=20");
+	}
+else
+	{
+	run("Make Montage...", "columns=" + ncol + " rows=" + nrow + " scale=1 first=1 last=" + linesInfo.length + " increment=1 border=10 font=20 label");
+	}
+saveAs("PNG", projDir + "Lineages\\Montage.png");
+selectWindow("Montage.png");
+close();
+selectWindow("Stack");
+close();
