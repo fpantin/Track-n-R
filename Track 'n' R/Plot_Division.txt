@@ -87,6 +87,21 @@
 	AngleShiftTime = split(linesInfo[3], cellseparator);
 	Scales = split(linesInfo[4], cellseparator);
 
+	// edit 2018/08/25 //
+	// In some systems, empty cells are not ignored when a line is imported, while in others they are.
+	// This is a problem because two consecutive image names are always separated by an empty cell in PointTracker files.
+	// This piece of code allows removing the empty names.
+	if (Names.length == XYshift.length)
+		{
+		NamesTemp = Array.trim(Names, 1);
+		for (i = 1; i < (Names.length-1)/2+1; i++) 
+			{
+			NamesTemp = Array.concat(NamesTemp, Array.slice(Names, (i*2)-1, i*2)); 
+			}
+		Names = NamesTemp;
+		}
+	// end edit //
+
 
 	// Build the checkbox list
 
@@ -507,7 +522,7 @@
 				cellsRout = split(linesRout[linesRout.length - 1], cellseparator);
 				if (cellsRout.length > 0)
 					{
-					if (cellsRout[0] == "Execution halted")
+					if (cellsRout[0] == "Execution halted" || cellsRout[0] == "Exécution arrêtée")
 						{
 						macroAbort = "not aborted yet";
 						while (macroAbort == "not aborted yet")

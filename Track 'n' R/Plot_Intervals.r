@@ -60,17 +60,20 @@ drawTicksDiv <- as.logical(para[37,]) # Default: T
 if (para[38,] == "NULL") { txt.legendDiv <- NULL } else { txt.legendDiv <- as.character(para[38,]) }
 
 n.pred <- as.numeric(as.character(para[39,])) # Default: 100
-if (para[40,] == "NULL") { contour.levels <- NULL } else { contour.levels <- seq(from = as.numeric(as.character(para[40,])), to = as.numeric(as.character(para[41,])), by = as.numeric(as.character(para[42,]))) }
-leafShapePredSurf <- as.logical(para[43,]) # Default: F
+polynomDegree <- as.numeric(as.character(para[40,])) # Default: 3
+rangeParameter <- as.numeric(as.character(para[41,])) # Default: 0.001
+if (para[42,] == "NULL") { contour.levels <- NULL } else { contour.levels <- seq(from = as.numeric(as.character(para[42,])), to = as.numeric(as.character(para[43,])), by = as.numeric(as.character(para[44,]))) }
+leafShapeKriging <- as.logical(para[45,]) # Default: F
+if (para[46,] == "NULL") { Reslim <- NULL } else { Reslim <- c(as.numeric(as.character(para[46,])), as.numeric(as.character(para[47,]))) }
 
-gro <- as.logical(para[44,]) # Default: T
-aki <- as.logical(para[45,]) # Default: T
-div <- as.logical(para[46,]) # Default: T
-interval <- as.numeric(as.character(para[47,])) # Default: 24
-Image0 <- as.character(para[48,]) # Default: first image
-initial.stage <- as.logical(para[49,]) # Default: T
-ini <- as.logical(para[50,]) # Default: T
-show.cell.number <- as.logical(para[51,]) # Default: F
+gro <- as.logical(para[48,]) # Default: T
+kri <- as.logical(para[49,]) # Default: T
+div <- as.logical(para[50,]) # Default: T
+interval <- as.numeric(as.character(para[51,])) # Default: 24
+Image0 <- as.character(para[52,]) # Default: first image
+initial.stage <- as.logical(para[53,]) # Default: T
+ini <- as.logical(para[54,]) # Default: T
+show.cell.number <- as.logical(para[55,]) # Default: F
 
 
 ## Set working directory ##
@@ -153,12 +156,13 @@ ifelse(ini, ini <- which(as.character(InfoVertices$Image) == Image0), ini <- 1)
   arg <- list(Cells = Cells, Divisions = Divisions, Vertices = Vertices, InfoVertices = InfoVertices, meanAngle = meanAngle,
               alignToPetioleLaminaBoundary = alignToPetioleLaminaBoundary,
               interval = interval, Image0 = Image0, initial.stage = initial.stage,
-              leafShapePredSurf = leafShapePredSurf,
+              leafShapeKriging = F,
               before = before, k.growth = k.growth, PNG = T, black = black, tick = tick,
               round.zlim = round.zlim, fix.min = fix.min, fix.max = fix.max,
               colorPaletteOfGFtbox = colorPaletteOfGFtbox, growthScale = growthScale, drawTicks = drawTicks,
               aniso.threshold = aniso.threshold, aniso.lwd.constant = aniso.lwd.constant,
-              n.pred = n.pred,
+              n.pred = n.pred, polynomDegree = polynomDegree, rangeParameter = rangeParameter,
+              cellularScale = F, plotResidual = F, exportCellValues = F,
               div.parameter =  div.parameter, round.zlimDiv = round.zlimDiv, fix.minDiv = fix.minDiv, fix.maxDiv = fix.maxDiv,
               colorPaletteOfGFtboxDiv = colorPaletteOfGFtboxDiv, growthScaleDiv = growthScaleDiv, drawTicksDiv = drawTicksDiv,
               wd = wd, File = csvFile, ini = ini, show.cell.number = show.cell.number) # edit 2016/01/15
@@ -185,7 +189,7 @@ ifelse(ini, ini <- which(as.character(InfoVertices$Image) == Image0), ini <- 1)
 
 plot.types <- vector()
 if (gro) { plot.types <- c(plot.types, "growth") }
-if (aki) { plot.types <- c(plot.types, "akima") }
+if (kri) { plot.types <- c(plot.types, "kriging") }
 if (div) { plot.types <- c(plot.types, "division") }
 
 my_img <- 0
@@ -198,8 +202,33 @@ for (plot.type in plot.types)
   # Plot and save the growth map #
   img_count <- do.call(plot.intervals, arg)
   
-  # Counts the plotted images
+  # Counts the plotted images #
   my_img <- my_img + img_count
+
+  # Additional maps for kriging #
+  if (plot.type == "kriging")
+    {
+    arg$cellularScale <- T
+    img_count <- do.call(plot.intervals, arg)
+    my_img <- my_img + img_count
+
+    arg$plotResidual <- T
+    arg$zlim <- NULL
+    if (!is.null(Reslim)) { arg$zlim <- Reslim }
+    img_count <- do.call(plot.intervals, arg)
+    my_img <- my_img + img_count
+
+    if (leafShapeKriging)
+       {
+       arg$cellularScale <- F
+       arg$plotResidual <- F
+       arg$leafShapeKriging <- T
+       arg$zlim <- NULL
+       if (!is.null(zlim)) { arg$zlim <- zlim }
+       img_count <- do.call(plot.intervals, arg)
+       my_img <- my_img + img_count
+       }
+    }
   }
 
 

@@ -79,15 +79,15 @@
 	name = getTitle();
 
 	// Get width and height
-	ImageProp = split(getImageInfo(), "\n");
-	width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
-	height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+	//ImageProp = split(getImageInfo(), "\n");
+	width = getWidth; //parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+	height = getHeight; //parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
 
 	// (Additional step because for some angle values, lateral or proximodistal bands are added during the rotation)
 	run("Rotate... ", "angle=" + AngleShift + " grid=1 interpolation=Bilinear  enlarge");
-	rotImageProp = split(getImageInfo(), "\n");
-	rotWidth = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
-	rotHeight = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+	//rotImageProp = split(getImageInfo(), "\n");
+	rotWidth = getWidth; //parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels"))); //// WARNING: bug in the previous version? The functions should have been applied on rotImageProp, not ImageProp
+	rotHeight = getHeight; //parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels"))); //// WARNING: bug in the previous version? The functions should have been applied on rotImageProp, not ImageProp
 	rotWidthExpected = width*cos(abs(AngleShift * PI/180)) + height*sin(abs(AngleShift * PI/180)); // if lateral margins are not created
 	rotHeightExpected = height*cos(abs(AngleShift * PI/180)) + width*sin(abs(AngleShift * PI/180)); // if proximodistal margins are not created
 	xDif = rotWidth - rotWidthExpected;
@@ -171,9 +171,9 @@ for (i = 0; i < linesInfo.length; i++)
 	run("RGB Color");
 	
 	// Get width and height
-	ImageProp = split(getImageInfo(), "\n");
-	width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
-	height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+	//ImageProp = split(getImageInfo(), "\n");
+	width = getWidth; //parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+	height = getHeight; //parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
 
 	// Set a color for drawing vertices
 	setForegroundColor(R, G, B);
@@ -230,9 +230,9 @@ for (i = 0; i < linesInfo.length; i++)
 		}
 
 	// (Additional step because for some angle values, lateral or proximodistal bands are added during the rotation)
-	rotImageProp = split(getImageInfo(), "\n");
-	rotWidth = parseFloat(substring(rotImageProp[2], indexOf(rotImageProp[2], "(") + 1, indexOf(rotImageProp[2], ")")));
-	rotHeight = parseFloat(substring(rotImageProp[3], indexOf(rotImageProp[3], "(") + 1, indexOf(rotImageProp[3], ")")));
+	//rotImageProp = split(getImageInfo(), "\n");
+	rotWidth = getWidth; //parseFloat(substring(rotImageProp[2], indexOf(rotImageProp[2], "(") + 1, indexOf(rotImageProp[2], ")")));
+	rotHeight = getHeight; //parseFloat(substring(rotImageProp[3], indexOf(rotImageProp[3], "(") + 1, indexOf(rotImageProp[3], ")")));
 	rotWidthExpected = width*cos(abs(AngleShift * PI/180)) + height*sin(abs(AngleShift * PI/180)); // if lateral margins are not created
 	rotHeightExpected = height*cos(abs(AngleShift * PI/180)) + width*sin(abs(AngleShift * PI/180)); // if proximodistal margins are not created
 	xDif = rotWidth - rotWidthExpected;
@@ -251,9 +251,9 @@ for (i = 0; i < linesInfo.length; i++)
 	// Resize
 	if (i == 0)
 		{
-		ImageProp = split(getImageInfo(), "\n");
-		setWidth = parseFloat(substring(ImageProp[2], indexOf(ImageProp[2], "(") + 1, indexOf(ImageProp[2], ")")));
-		setHeight = parseFloat(substring(ImageProp[3], indexOf(ImageProp[3], "(") + 1, indexOf(ImageProp[3], ")")));
+		//ImageProp = split(getImageInfo(), "\n");
+		setWidth = getWidth; //parseFloat(substring(ImageProp[2], indexOf(ImageProp[2], "(") + 1, indexOf(ImageProp[2], ")")));
+		setHeight = getHeight; //parseFloat(substring(ImageProp[3], indexOf(ImageProp[3], "(") + 1, indexOf(ImageProp[3], ")")));
 		}
 	else
 		{

@@ -368,7 +368,7 @@
 				cellsRout = split(linesRout[linesRout.length - 1], cellseparator);
 				if (cellsRout.length > 0)
 					{
-					if (cellsRout[0] == "Execution halted")
+					if (cellsRout[0] == "Execution halted" || cellsRout[0] == "Exécution arrêtée")
 						{
 						macroAbort = "not aborted yet";
 						while (macroAbort == "not aborted yet")

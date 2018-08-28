@@ -49,6 +49,21 @@
 	AngleShiftTime = split(linesInfo[3], cellseparator);
 	Scales = split(linesInfo[4], cellseparator);
 
+	// edit 2018/08/25 //
+	// In some systems, empty cells are not ignored when a line is imported, while in others they are.
+	// This is a problem because two consecutive image names are always separated by an empty cell in PointTracker files.
+	// This piece of code allows removing the empty names.
+	if (Names.length == XYshift.length)
+		{
+		NamesTemp = Array.trim(Names, 1);
+		for (i = 1; i < (Names.length-1)/2+1; i++) 
+			{
+			NamesTemp = Array.concat(NamesTemp, Array.slice(Names, (i*2)-1, i*2)); 
+			}
+		Names = NamesTemp;
+		}
+	// end edit //
+
 	// Set tool Polygon
 	setTool("polygon");
 
@@ -59,7 +74,7 @@ for (i = 0; i < (Names.length-1); i++)
 	{
 
 	// Get image name
-	name = Names[1+i]; // Warning: blank cells were ignored when the line has been imported
+	name = Names[1+i];
 	nameWithoutExtension = substring(name, 0, lengthOf(name) - 4);
 
 	// Warning:
@@ -93,18 +108,20 @@ for (i = 0; i < (Names.length-1); i++)
 			originY = 0;
 
 			// Forward rotation
-			ImageProp = split(getImageInfo(), "\n");
-			//width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
-			height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+			//ImageProp = split(getImageInfo(), "\n");
+			////width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+			//height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+			height = getHeight;
 			run("Rotate... ", "angle=" + 45 + " grid=1 interpolation=Bilinear  enlarge");
 			originXrotated = originX * cos(-45 * PI/180) + originY * sin(-45 * PI/180);
 			originYrotated = -originX * sin(-45 * PI/180) + originY * cos(-45 * PI/180);
 			originXrotated += height * sin(45 * PI/180);
 
 			// Backward rotation
-			ImageProp = split(getImageInfo(), "\n");
-			width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
-			//height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+			//ImageProp = split(getImageInfo(), "\n");
+			//width = parseFloat(substring(ImageProp[2], 8, indexOf(ImageProp[2], " pixels")));
+			////height = parseFloat(substring(ImageProp[3], 9, indexOf(ImageProp[3], " pixels")));
+			width = getWidth;
 			run("Rotate... ", "angle=" + -45 + " grid=1 interpolation=Bilinear  enlarge");
 			originX = originXrotated * cos(45 * PI/180) + originYrotated * sin(45 * PI/180);
 			originY = -originXrotated * sin(45 * PI/180) + originYrotated * cos(45 * PI/180);

@@ -49,8 +49,10 @@ aniso.lwd.constant <- as.logical(para[27,]) # Default: F
 fit.last <- as.logical(para[28,]) # Default: F
 n.pred <- as.numeric(as.character(para[29,])) # Default: 100
 polynomDegree <- as.numeric(as.character(para[30,])) # Default: 3
-if (para[31,] == "NULL") { contour.levels <- NULL } else { contour.levels <- seq(from = as.numeric(as.character(para[31,])), to = as.numeric(as.character(para[32,])), by = as.numeric(as.character(para[33,]))) }
-leafShapeKriging <- as.logical(para[34,]) # Default: F
+rangeParameter <- as.numeric(as.character(para[31,])) # Default: 0.001
+if (para[32,] == "NULL") { contour.levels <- NULL } else { contour.levels <- seq(from = as.numeric(as.character(para[32,])), to = as.numeric(as.character(para[33,])), by = as.numeric(as.character(para[34,]))) }
+leafShapeKriging <- as.logical(para[35,]) # Default: F
+if (para[36,] == "NULL") { Reslim <- NULL } else { Reslim <- c(as.numeric(as.character(para[36,])), as.numeric(as.character(para[37,]))) }
 
 
 ## Set working directory ##
@@ -145,12 +147,13 @@ for (my_img in 1:(nrow(ProcessedImages)-1))
   arg <- list(InfoVertices = InfoVertices, Vertices = Vertices, Cells = Cells, Divisions = Divisions,
               meanAngle = meanAngle, Growth = Growth, Shapes = Shapes,
               alignToPetioleLaminaBoundary = alignToPetioleLaminaBoundary,
-              Image1 = Image1, Image2 = Image2, leafShapeKriging = leafShapeKriging,
+              Image1 = Image1, Image2 = Image2, leafShapeKriging = F,
               before = before, k.growth = k.growth, PNG = T, black = black, tick = tick,
               round.zlim = round.zlim, fix.min = fix.min, fix.max = fix.max,
               colorPaletteOfGFtbox = colorPaletteOfGFtbox, growthScale = growthScale, drawTicks = drawTicks,
               aniso.threshold = aniso.threshold, aniso.lwd.constant = aniso.lwd.constant,
-              n.pred = n.pred, polynomDegree = polynomDegree)
+              n.pred = n.pred, polynomDegree = polynomDegree, rangeParameter = rangeParameter,
+              cellularScale = F, plotResidual = F)
 
 
   # Optional arguments #
@@ -186,7 +189,7 @@ for (my_img in 1:(nrow(ProcessedImages)-1))
   actualTime1 <- InfoVertices$Time[InfoVertices$Images == Image1]
   actualTime2 <- InfoVertices$Time[InfoVertices$Images == Image2]
 
-  filename <- paste("Graphical Outputs/Contours__", k.g, "__",
+  filename <- paste("Graphical Outputs/Contours__", k.g, "__TrackedRegion__",
                     substr(Image1, 1, nchar(Image1) - 4), " - ", substr(Image2, 1, nchar(Image2) - 4), " (",
                     round(actualTime1, 1), " - ", round(actualTime2, 1), " h).png", sep = "")
   if (nchar(filename) > 259 - nchar(wd)) { filename <- paste(substr(filename, 1, 259 - nchar(wd) - 4), ".png", sep = "") }
@@ -195,9 +198,52 @@ for (my_img in 1:(nrow(ProcessedImages)-1))
   png(filename, width = size.in.pix, height = size.in.pix, res = 0.15*size.in.pix)
   do.call(plot.kriging, arg)
   dev.off()
+
+  arg$cellularScale <- T
+  filename <- paste("Graphical Outputs/Contours__", k.g, "__Cell__",
+                    substr(Image1, 1, nchar(Image1) - 4), " - ", substr(Image2, 1, nchar(Image2) - 4), " (",
+                    round(actualTime1, 1), " - ", round(actualTime2, 1), " h).png", sep = "")
+  if (nchar(filename) > 259 - nchar(wd)) { filename <- paste(substr(filename, 1, 259 - nchar(wd) - 4), ".png", sep = "") }
+  if (file.exists(filename)) { file.remove(filename) }
+  size.in.pix <- 2000
+  png(filename, width = size.in.pix, height = size.in.pix, res = 0.15*size.in.pix)
+  do.call(plot.kriging, arg)
+  dev.off()
+
+  arg$plotResidual <- T
+  arg$zlim <- NULL
+  if (!is.null(Reslim)) { arg$zlim <- Reslim }
+  filename <- paste("Graphical Outputs/Contours__", k.g, "__CellResidual__",
+                    substr(Image1, 1, nchar(Image1) - 4), " - ", substr(Image2, 1, nchar(Image2) - 4), " (",
+                    round(actualTime1, 1), " - ", round(actualTime2, 1), " h).png", sep = "")
+  if (nchar(filename) > 259 - nchar(wd)) { filename <- paste(substr(filename, 1, 259 - nchar(wd) - 4), ".png", sep = "") }
+  if (file.exists(filename)) { file.remove(filename) }
+  size.in.pix <- 2000
+  png(filename, width = size.in.pix, height = size.in.pix, res = 0.15*size.in.pix)
+  do.call(plot.kriging, arg)
+  dev.off()
+
+  if (leafShapeKriging)
+    {
+    arg$cellularScale <- F
+    arg$plotResidual <- F
+    arg$leafShapeKriging <- T
+    arg$zlim <- NULL
+    if (!is.null(zlim)) { arg$zlim <- zlim }
+    filename <- paste("Graphical Outputs/Contours__", k.g, "__WholeLeaf__",
+                      substr(Image1, 1, nchar(Image1) - 4), " - ", substr(Image2, 1, nchar(Image2) - 4), " (",
+                      round(actualTime1, 1), " - ", round(actualTime2, 1), " h).png", sep = "")
+    if (nchar(filename) > 259 - nchar(wd)) { filename <- paste(substr(filename, 1, 259 - nchar(wd) - 4), ".png", sep = "") }
+    if (file.exists(filename)) { file.remove(filename) }
+    size.in.pix <- 2000
+    png(filename, width = size.in.pix, height = size.in.pix, res = 0.15*size.in.pix)
+    do.call(plot.kriging, arg)
+    dev.off()
+    }
   }
 
 
 ## Save the number of images which have been plotted ##
 
+ifelse (leafShapeKriging, my_img <- my_img*4, my_img <- my_img*3)
 write.table(my_img, "D:/count_img.txt", row.names = F, col.names = F)

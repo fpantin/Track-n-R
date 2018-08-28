@@ -87,6 +87,21 @@
 	AngleShiftTime = split(linesInfo[3], cellseparator);
 	Scales = split(linesInfo[4], cellseparator);
 
+	// edit 2018/08/25 //
+	// In some systems, empty cells are not ignored when a line is imported, while in others they are.
+	// This is a problem because two consecutive image names are always separated by an empty cell in PointTracker files.
+	// This piece of code allows removing the empty names.
+	if (Names.length == XYshift.length)
+		{
+		NamesTemp = Array.trim(Names, 1);
+		for (i = 1; i < (Names.length-1)/2+1; i++) 
+			{
+			NamesTemp = Array.concat(NamesTemp, Array.slice(Names, (i*2)-1, i*2)); 
+			}
+		Names = NamesTemp;
+		}
+	// end edit //
+
 
 	// Open the dialog box for choice of plot type
 
@@ -107,8 +122,8 @@
 		Dialog.show();
 		gro = Dialog.getCheckbox();
 		if (gro == 1) { gro = "TRUE"; countPlotType = countPlotType +1; }; else { gro = "FALSE"; };
-		aki = Dialog.getCheckbox();
-		if (aki == 1) { aki = "TRUE"; countPlotType = countPlotType +1; }; else { aki = "FALSE"; };
+		kri = Dialog.getCheckbox();
+		if (kri == 1) { kri = "TRUE"; countPlotType = countPlotType +1; }; else { kri = "FALSE"; };
 		div = Dialog.getCheckbox();
 		if (div == 1) { div = "TRUE"; countPlotType = countPlotType +1; }; else { div = "FALSE"; };
 		interval = Dialog.getNumber();
@@ -198,7 +213,7 @@
 		Dialog.addCheckbox("Show cell number", false);
 		}
 
-	if (gro == "TRUE" || aki == "TRUE")
+	if (gro == "TRUE" || kri == "TRUE")
 		{
 		Dialog.setInsets(0, 0, -10);
 		Dialog.addMessage("###########################################   GROWTH   ###########################################");
@@ -282,7 +297,7 @@
 		showCellNumber = "FALSE";
 		}
 
-	if (gro == "TRUE" || aki == "TRUE")
+	if (gro == "TRUE" || kri == "TRUE")
 		{
 		Percent = Dialog.getRadioButton();
 		if (Percent == "Let the software decide") { Percent = "NULL"; } else if (Percent == "Yes") { Percent = "TRUE"; } else if (Percent == "No") { Percent = "FALSE"; };
@@ -442,31 +457,53 @@
 		}
 	
 
-	// Parameters for surface fitting (if required)
+	// Parameters for kriging (if required)
 
-	if (aki == "TRUE")
+	if (kri == "TRUE")
 		{
 		// Open the dialog box of the parameters specific to the surface fitting
 
-		Dialog.create("Choose parameters for the surface fitting");
+		Dialog.create("Choose parameters for the kriging estimation");
+		Dialog.addMessage("####################################  KRIGING  ####################################");
+		Dialog.addNumber("Grid density of the predicted surface (10 - 1000):", 100);
+		Dialog.addNumber("Degree of the polynomial surface (2 - 6):", 3);
+		Dialog.addNumber("Range of the exponential covariance function (> 0):", 0.001);
+		Dialog.addCheckbox("Perform an additional kriging prediction over the whole leaf surface", false);
+		Dialog.addMessage("###################################  CONTOURS  ###################################");	
 		Dialog.addMessage("Enter the minimum, maximum and interval for contours, OR keep BLANK to let the software decide.\nTo plot a single contour, enter the same value for the minimum and the maximum, and set interval to zero.\nIn all cases, interval should be inferior or equal to maximum minus minimum.");
 		Dialog.addString("Minimal growth value for contours:","");
 		Dialog.addString("Maximal growth value for contours:","");
 		Dialog.addString("Interval for contours:","");
-		Dialog.addMessage(" \n")
-		//Dialog.addNumber("Grid density of the predicted surface (10 - 1000):", 1000);
-		Dialog.addCheckbox("Extrapolate over the whole leaf surface", false);
+		Dialog.addMessage("##################################  RESIDUALS  ##################################");	
+		Dialog.addString("Enter minimum for residuals (keep BLANK if unknown):", "");
+		Dialog.addString("AND maximum for residuals (keep BLANK if unknown):", "");
 		Dialog.show();
 
 
 		// Get the values back and transform them to match R script's requirements
 
+		error_npred = "FALSE";
+		error_degree = "FALSE";
+		error_range = "FALSE";
 		error_contours = "FALSE";
 		check_cmini = "FALSE";
 		check_cmaxi = "FALSE";
 		check_cint = "FALSE";
-		error_npred = "FALSE";
+		error_Reslim = "FALSE";
+		check_Resmini = "FALSE";
+		check_Resmaxi = "FALSE";
 
+		npred = Dialog.getNumber();
+		if (npred != parseFloat(npred)) { error_npred = "TRUE"; };
+		else if (npred < 10 || npred > 1000 || npred != round(npred)) { error_npred = "TRUE"; };
+		degree = Dialog.getNumber();
+		if (degree != parseFloat(degree)) { error_degree = "TRUE"; };
+		else if (degree < 2 || degree > 6 || degree != round(degree)) { error_degree = "TRUE"; };
+		range = Dialog.getNumber();
+		if (range != parseFloat(range)) { error_range = "TRUE"; };
+		else if (range <= 0) { error_range = "TRUE"; };
+		leafShapeKriging = Dialog.getCheckbox();
+		if (leafShapeKriging == 1) { leafShapeKriging = "TRUE"; }; else { leafShapeKriging = "FALSE"; };
 		cmini = Dialog.getString();
 		if (replace(cmini, " ", "") == "") { cmini = "NULL"; check_cmini = "TRUE"; }; else { cmini = parseFloat(cmini); if (isNaN(cmini)) { error_contours = "TRUE"; }; };
 		cmaxi = Dialog.getString();
@@ -475,14 +512,50 @@
 		if (replace(cint, " ", "") == "") { cint = "NULL"; check_cint = "TRUE"; }; else { cint = parseFloat(cint); if (isNaN(cint)) { error_contours = "TRUE"; }; };
 		if ((check_cmini != check_cmaxi) || (check_cmini != check_cint)) { error_contours = "TRUE"; };
 		if (check_cmini == "FALSE" && check_cmaxi == "FALSE" && check_cint == "FALSE" && error_contours == "FALSE") { if (cint > (cmaxi - cmini) || cint < 0 || (cint == 0 && cmaxi != cmini)) { error_contours = "TRUE"; }; };
-		npred = 1000; //npred = Dialog.getNumber();
-		if (npred != parseFloat(npred)) { error_npred = "TRUE"; };
-		else if (npred < 10 || npred > 1000 || npred != round(npred)) { error_npred = "TRUE"; };
-		leafShapePredSurf = Dialog.getCheckbox();
-		if (leafShapePredSurf == 1) { leafShapePredSurf = "TRUE"; }; else { leafShapePredSurf = "FALSE"; };
+		Resmini = Dialog.getString();
+		if (replace(Resmini, " ", "") == "") { Resmini = "NULL"; check_Resmini = "TRUE"; }; else { Resmini = parseFloat(Resmini); if (isNaN(Resmini)) { error_Reslim = "TRUE"; }; };
+		Resmaxi = Dialog.getString();
+		if (replace(Resmaxi, " ", "") == "") { Resmaxi = "NULL"; check_Resmaxi = "TRUE"; }; else { Resmaxi = parseFloat(Resmaxi); if (isNaN(Resmaxi)) { error_Reslim = "TRUE"; }; };
+		if (check_Resmini != check_Resmaxi) { error_Reslim = "TRUE"; };
 
 
 		// Check potential errors
+
+		while (error_npred == "TRUE")
+			{
+			error_npred = "FALSE";
+			Dialog.create("Error, please correct");
+			Dialog.addMessage("Grid density for surface prediction should be an integer between 10 and 1000.");
+			Dialog.addNumber("Grid density of the predicted surface (10 - 1000):", 100);
+			Dialog.show();
+			npred = Dialog.getNumber();
+			if (npred != parseFloat(npred)) { error_npred = "TRUE"; };
+			else if (npred < 10 || npred > 1000 || npred != round(npred)) { error_npred = "TRUE"; };
+			}
+
+		while (error_degree == "TRUE")
+			{
+			error_degree = "FALSE";
+			Dialog.create("Error, please correct");
+			Dialog.addMessage("The degree of the fitted polynomial surface should be an integer between 2 and 6.");
+			Dialog.addNumber("Degree of the polynomial surface (2 - 6):", 3);
+			Dialog.show();
+			degree = Dialog.getNumber();
+			if (degree != parseFloat(degree)) { error_degree = "TRUE"; };
+			else if (degree < 2 || degree > 6 || degree != round(degree)) { error_degree = "TRUE"; };
+			}
+
+		while (error_range == "TRUE")
+			{
+			error_range = "FALSE";
+			Dialog.create("Error, please correct");
+			Dialog.addMessage("The range parameter for the exponential covariance function should be a strictly positive number.");
+			Dialog.addNumber("Range parameter for the exponential covariance function (> 0):", 0.001);
+			Dialog.show();
+			range = Dialog.getNumber();
+			if (range != parseFloat(range)) { error_range = "TRUE"; };
+			else if (range <= 0) { error_range = "TRUE"; };
+			}
 
 		while (error_contours == "TRUE")
 			{
@@ -508,26 +581,36 @@
 			}
 		if (cmini == parseFloat(cmini)) { if (cmini > cmaxi) { cmini_temp = cmini; cmini = cmaxi; cmaxi = cmini_temp; }; };
 	
-		while (error_npred == "TRUE")
+		while (error_Reslim == "TRUE")
 			{
-			error_npred = "FALSE";
+			error_Reslim = "FALSE";
+			check_Resmini = "FALSE";
+			check_Resmaxi = "FALSE";
 			Dialog.create("Error, please correct");
-			Dialog.addMessage("Grid density for surface prediction should be an integer between 10 and 1000.");
-			Dialog.addNumber("Grid density of the predicted surface (10 - 1000):", 1000);
+			Dialog.addMessage("The limits for growth should be either missing or given as two numeric values.");
+			Dialog.addString("Enter minimum for growth (keep BLANK if unknown):", "");
+			Dialog.addString("AND maximum for growth (keep BLANK if unknown):", "");
 			Dialog.show();
-			npred = Dialog.getNumber();
-			if (npred != parseFloat(npred)) { error_npred = "TRUE"; };
-			else if (npred < 10 || npred > 1000 || npred != round(npred)) { error_npred = "TRUE"; };
+			Resmini = Dialog.getString();
+			if (replace(Resmini, " ", "") == "") { Resmini = "NULL"; check_Resmini = "TRUE"; }; else { Resmini = parseFloat(Resmini); if (isNaN(Resmini)) { error_Reslim = "TRUE"; }; };
+			Resmaxi = Dialog.getString();
+			if (replace(Resmaxi, " ", "") == "") { Resmaxi = "NULL"; check_Resmaxi = "TRUE"; }; else { Resmaxi = parseFloat(Resmaxi); if (isNaN(Resmaxi)) { error_Reslim = "TRUE"; }; };
+			if (check_Resmini != check_Resmaxi) { error_Reslim = "TRUE"; };
 			}
+		if (Resmini == parseFloat(Resmini)) { if (Resmini > Resmaxi) { Resmini_temp = Resmini; Resmini = Resmaxi; Resmaxi = Resmini_temp; }; };
 		}
 	
-	else // if 'aki' is FALSE, assign fitting parameters that won't be used, though required for the file standard
+	else // if 'kri' is FALSE, assign kriging parameters that won't be used, though required for the file standard
 		{
+		npred = 1000;
+		degree = 3;
+		range = 0.001;
 		cmini = "NULL";
 		cmaxi = "NULL";
 		cint = "NULL";
-		npred = 1000;
-		leafShapePredSurf = "FALSE";
+		leafShapeKriging = "FALSE";
+		Resmini = "NULL";
+		Resmaxi = "NULL";
 		}
 
 
@@ -679,13 +762,17 @@
 	print(f, txtlegendDiv);
 
 	print(f, npred);
+	print(f, degree);
+	print(f, range);
 	print(f, cmini);
 	print(f, cmaxi);
 	print(f, cint);
-	print(f, leafShapePredSurf);
+	print(f, leafShapeKriging);
+	print(f, Resmini);
+	print(f, Resmaxi);
 
 	print(f, gro);
-	print(f, aki);
+	print(f, kri);
 	print(f, div);
 	print(f, interval);
 	print(f, Image0);
@@ -728,7 +815,7 @@
 				cellsRout = split(linesRout[linesRout.length - 1], cellseparator);
 				if (cellsRout.length > 0)
 					{
-					if (cellsRout[0] == "Execution halted")
+					if (cellsRout[0] == "Execution halted" || cellsRout[0] == "Exécution arrêtée")
 						{
 						macroAbort = "not aborted yet";
 						while (macroAbort == "not aborted yet")

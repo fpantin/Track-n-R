@@ -14,7 +14,7 @@
 ## Libraries ##
 
 options(repos = "http://cran.ma.imperial.ac.uk/") # UK/London
-for (pkg in c("RODBC", "spatial", "sp", "splancs", "rgdal", "RSEIS", "rgeos", "grDevices", "rJava", "akima"))
+for (pkg in c("spatial", "sp", "splancs", "rgdal", "RSEIS", "rgeos", "grDevices", "rJava"))
   {
   if (!pkg %in% installed.packages()[, "Package"]) { install.packages(pkg) }
   #update.packages(pkg)
@@ -707,6 +707,31 @@ makeCmap <- function (Col, nsteps, frac)
   return (cmap)
   }
   
+
+colorMap.Residual <- function (Range, zerowhite = T, n.colors)
+  {
+  # Blue-white-red colour scale for residual data
+
+  negpart <- matrix(c(0, 1, 1,    # cyan
+                      0, 0.7, 1,   # bluish cyan
+                      0, 0, 1),     # blue
+                      nrow = 3, byrow = T)
+
+  pospart <- matrix(c(1, 0.5, 0,   # orange
+                      1, 0, 0,     # red
+                      2/3, 0, 0),  # darker red
+                      nrow = 3, byrow = T)
+
+  if (zerowhite) { pospart <- rbind(c(1, 1, 1), pospart) } # fades to white at zero
+
+  negpart <- rbind(pospart[1,], negpart)
+
+  if (missing(Range)) { Range <- c(-1, 1) }
+  #Range <- extendToZero(Range) ## Not used since it must be done only if missing(zlim); set.zlim() does the job
+  Colors <- posnegMap(Range, negpart, pospart, n.colors)
+  return (list(Colors = rgb(Colors), Range = Range))
+  }
+
   
   
 ################################################################################
@@ -1953,11 +1978,14 @@ process.DivWithInterval <- function (InfoVertices, Vertices, Cells, Divisions, m
 
 # Perform initial checks on parameters given by the user
 
-initialChecks <- function (scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lwd, n.pred, polynomDegree, contour.levels, div.parameter, check.type)
+initialChecks <- function (scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lwd,
+                           n.pred, polynomDegree, rangeParameter, contour.levels,
+                           leafShapeKriging, cellularScale, plotResidual, exportCellValues,
+                           div.parameter, check.type)
   {
   # This function checks if parameters for the plotting functions are correct.
   
-  if (check.type %in% c("growth", "kriging", "akima", "division"))
+  if (check.type %in% c("growth", "kriging", "division"))
     {
     if (!missing(scaleBar))
       {
@@ -1992,7 +2020,7 @@ initialChecks <- function (scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lw
       }
           
     # Specific to growth and surface estimation
-    if (check.type %in% c("growth", "kriging", "akima"))
+    if (check.type %in% c("growth", "kriging"))
       {
       if (aniso.threshold < 0 | aniso.threshold > 1 | length(aniso.threshold) != 1)
         {
@@ -2007,8 +2035,8 @@ initialChecks <- function (scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lw
           }
         }
       
-      # Specific to surface estimation
-      if (check.type %in% c("kriging", "akima"))
+      # Specific to kriging
+      if (check.type == "kriging")
         {
         if (!missing(n.pred))
           {
@@ -2026,15 +2054,42 @@ initialChecks <- function (scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lw
             }
           }
         
-        # Specific to kriging
-        if (check.type == "kriging")
+        if (!missing(polynomDegree))
           {
-          if (!missing(polynomDegree))
+          if (polynomDegree < 2 | polynomDegree > 6 | length(polynomDegree) != 1 | as.integer(polynomDegree) != polynomDegree)
             {
-            if (polynomDegree < 2 | polynomDegree > 6 | length(polynomDegree) != 1 | as.integer(polynomDegree) != polynomDegree)
-              {
-              stop("The parameter 'polynomDegree' should be an integer between 2 and 6.")
-              }    
+            stop("The parameter 'polynomDegree' should be an integer between 2 and 6.")
+            }    
+          }
+        if (!missing(rangeParameter))
+          {
+          if (rangeParameter <= 0 | length(rangeParameter) != 1)
+            {
+            stop("The parameter 'rangeParameter' should be a strictly positive number.")
+            }
+          }
+        if (leafShapeKriging)
+          {
+          if (cellularScale | plotResidual | exportCellValues)
+            {
+            stop("Cell values are not compatible with kriging extrapolation over the whole leaf surface:
+                  'cellularScale', 'plotResidual' and 'exportCellValues' should be FALSE when 'leafShapeKriging' is TRUE.")
+            }
+          }
+        if (plotResidual)
+          {
+          if (!cellularScale)
+            {
+            stop("Plotting residuals is possible at the cellular level only:
+                  'cellularScale' should be TRUE when 'plotResidual' is TRUE.")
+            }
+          }
+        if (exportCellValues)
+          {
+          if (!cellularScale & !plotResidual)
+            {
+            stop("Exporting cell values is only possible if they are computed:
+                  'cellularScale' or 'plotResidual' should be TRUE when 'exportCellValues' is TRUE.")
             }
           }
         }
@@ -2058,7 +2113,7 @@ initialChecks <- function (scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lw
     
   else
     {
-    stop("The argument 'check.type' should be one string within \"growth\", \"kriging\", \"akima\" or \"division\"")
+    stop("The argument 'check.type' should be one string within \"growth\", \"kriging\" or \"division\"")
     }
   }
 
@@ -2093,7 +2148,8 @@ set.zlim <- function (k, Percent, round.zlim, zlim, fix.min, fix.max, colorPalet
   #     namely the multiples of 1%·h^-1 (or 0.01 h^-1) within the range of 'zlim'
   #
   #   - the color scale 'Colors', comprising 'n.colors' colors. Setting 'colorPaletteOfGFtbox' to TRUE
-  #     will use the color palette implemented in GFtbox.
+  #     will use the color palette implemented in GFtbox. If FALSE, a blue-white-red colour scale will be used
+  #     for negative-zero-postive values.
 
   if (missing(zlim))
     {
@@ -2141,14 +2197,14 @@ set.zlim <- function (k, Percent, round.zlim, zlim, fix.min, fix.max, colorPalet
   if (colorPaletteOfGFtbox)
     {  
     c(Colors, Range) := rainbowMap(c(mini, maxi), F, n.colors)
-    mini <- Range[1]
-    maxi <- Range[2]
     }
   else
     {
-    Colors <- rev(rainbow(n.colors)[1:650])
+    c(Colors, Range) := colorMap.Residual(c(mini, maxi), T, n.colors)
     }
-    
+  mini <- Range[1]
+  maxi <- Range[2]
+
   below.mini <- which(k < mini)
   if (length(below.mini) > 0)
     {
@@ -2247,6 +2303,59 @@ get.txt.legend <- function (k.growth, Percent)
   else if (k.growth == 11)
     {
     return (expression(paste("Sector area (µm"^2, ")")))
+    }
+  }
+
+
+get.txt.legend.Residual <- function (k.growth, Percent)
+  {
+  # Same as 'get.txt.legend()' for residual data
+
+  if (k.growth == 2)
+    {
+    ifelse (Percent, return (expression(paste("Residual k"["area"], " (obs - fit, % h"^-1, ")"))),
+                     return (expression(paste("Residual k"["area"], " (obs - fit, h"^-1, ")"))))
+    }
+  else if (k.growth == 3)
+    {
+    ifelse (Percent, return (expression(paste("Residual k"["maj"], " (obs - fit, % h"^-1, ")"))),
+                     return (expression(paste("Residual k"["maj"], " (obs - fit, h"^-1, ")"))))
+    }
+  else if (k.growth == 4)
+    {
+    ifelse (Percent, return (expression(paste("Residual k"["min"], " (obs - fit, % h"^-1, ")"))),
+                     return (expression(paste("Residual k"["min"], " (obs - fit, h"^-1, ")"))))
+    }
+  else if (k.growth == 5)
+    {
+    return ("Residual orientation of the major axis (obs - fit, ° to the x-axis)")
+    }
+  else if (k.growth == 6)
+    {
+    ifelse (Percent, return (expression(paste("Residual rotation rate (obs - fit, % h"^-1, ")"))),
+                     return (expression(paste("Residual rotation rate (obs - fit, h"^-1, ")"))))
+    }
+  else if (k.growth == 7)
+    {
+    return ("Anisotropy")
+    }
+  else if (k.growth == 8)
+    {
+    ifelse (Percent, return (expression(paste("Residual k"["per to midline"], " (obs - fit, % h"^-1, ")"))),
+                     return (expression(paste("Residual k"["per to midline"], " (obs - fit, h"^-1, ")"))))
+    }
+  else if (k.growth == 9)
+    {
+    ifelse (Percent, return (expression(paste("Residual k"["midline"], " (obs - fit, % h"^-1, ")"))),
+                     return (expression(paste("Residual k"["midline"], " (obs - fit, h"^-1, ")"))))
+    }
+  else if (k.growth == 10)
+    {
+    return (expression(paste("Residual cell area (obs - fit, µm"^2, ")")))
+    }
+  else if (k.growth == 11)
+    {
+    return (expression(paste("Residual sector area (obs - fit, µm"^2, ")")))
     }
   }
 
@@ -2581,7 +2690,8 @@ plot.kriging <- function(InfoVertices, Vertices, Cells, Divisions, meanAngle, Gr
                          Percent, round.zlim = T, zlim, fix.min = T, fix.max = T,
                          colorPaletteOfGFtbox = T, growthScale = T, drawTicks = T, txt.legend,
                          anisotropy = F, aniso.threshold = 0.05, aniso.lwd, aniso.lwd.constant = F,
-                         n.pred = 100, polynomDegree = 3, contour.levels)
+                         n.pred = 100, polynomDegree = 3, rangeParameter = 0.001, contour.levels,
+                         cellularScale = F, plotResidual = F, exportCellValues = F)
   {
   # This function performs and plots a kriging estimation of growth
   # between 'Image 1' and 'Image2' either computed in PointTracker or recomputed in R.
@@ -2605,15 +2715,31 @@ plot.kriging <- function(InfoVertices, Vertices, Cells, Divisions, meanAngle, Gr
   #     Increasing 'polynomDegree' will yield more convoluted profiles. Setting it to maximum does not generally
   #     produce graphs making sense. Default is 3.
   #
+  #   - 'rangeParameter' is the range used in the spatial exponental covariance function (see '?expcov').
+  #     It should be a strictly posititve number. Default is 0.001.
+  #     Increasing 'rangeParameter' will yield more convoluted profiles.
+  #
   #   - 'contour.levels' is a numeric vector of at least one value giving the levels where the contours are plotted.
   #     There should be given in %·h^-1 if Percent is TRUE, in h^-1 otherwise. Examples are: 
   #       - 'contour.levels = 0.15'
   #       - 'contour.levels = c(0, 1, 4)'
   #       - 'contour.levels = seq(0, 0.06, 0.01)'
   #     If missing, all multiples of 1 %·h^-1 (or 0.01 h^-1) within the range of 'zlim' will be plotted.
-  
+  #
+  #   - Setting 'cellularScale' to TRUE will produce a map
+  #     of the kriging estimate averaged over the area of each cell.
+  #
+  #   - Setting 'plotResidual' to TRUE will produce a map
+  #     of the difference between the measured and estimated value for each cell (residuals).
+  #
+  #   - Setting 'exportCellValues' to TRUE will return a dataframe
+  #     of the cell measured and actual values, as well as their difference (residuals).
+
   # Perform initial checks on parameters given by the user
-  initialChecks(scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lwd, n.pred, polynomDegree, contour.levels, check.type = "kriging")
+  initialChecks(scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lwd,
+                n.pred, polynomDegree, rangeParameter, contour.levels,
+                leafShapeKriging, cellularScale, plotResidual, exportCellValues,
+                check.type = "kriging")
 
   # Prepare the plot window
   if (!PNG) { windows() }
@@ -2648,71 +2774,92 @@ plot.kriging <- function(InfoVertices, Vertices, Cells, Divisions, meanAngle, Gr
   ifelse (leafShapeKriging, maxX <- max(LeafSpline$x), maxX <- max(VertX, na.rm = T))
   ifelse (leafShapeKriging, minY <- min(LeafSpline$y), minY <- min(VertY, na.rm = T))
   ifelse (leafShapeKriging, maxY <- max(LeafSpline$y), maxY <- max(VertY, na.rm = T))
-  kr <- surf.gls(polynomDegree, expcov, centro, d = 0.7)
+  kr <- surf.gls(polynomDegree, expcov, centro, d = rangeParameter)
   prsurf <- prmat(kr, minX, maxX, minY, maxY, n.pred-1)
 
   # Find which predicted values fall in the whole leaf or the tracked region
-  pip <- matrix(nrow = n.pred, ncol = n.pred)
+  matpred <- expand.grid(y = prsurf$y, x = prsurf$x, KEEP.OUT.ATTRS = F)
   if (leafShapeKriging)
     {
-    for (x in 1:n.pred)
-      {
-      pip.temp <- point.in.polygon(rep(prsurf$x[x], n.pred), prsurf$y, LeafSpline$x, LeafSpline$y)
-      pip.temp[pip.temp > 0] <- 1
-      pip[x, 1:n.pred] <- pip.temp
-      }
+    pip <- matrix(point.in.polygon(matpred$x, matpred$y, LeafSpline$x, LeafSpline$y), nrow = n.pred, byrow = T)
     }
   else
     {
+    pip <- matrix(nrow = n.pred, ncol = n.pred)
+    if (cellularScale | plotResidual) { kCellSmooth <- vector() }
     for (cell in levels(Shapes$Cell))
       {
       vert <- na.omit(as.numeric(Cells[Cells$Cell == cell, -1]))
       XY <- cell.coord(vert, VertX, VertY, Vertices)
-      for (x in 1:n.pred)
-        {
-        pip.temp <- point.in.polygon(rep(prsurf$x[x], n.pred), prsurf$y, XY[,1], XY[,2])
-        pip.temp[pip.temp > 0] <- 1
-        pip.temp[pip[x, 1:n.pred] == 1] <- 1
-        pip[x, 1:n.pred] <- pip.temp
-        }
+      pip.cell <- pip.temp <- matrix(point.in.polygon(matpred$x, matpred$y, XY[,1], XY[,2]), nrow = n.pred, byrow = T)
+      if (cellularScale | plotResidual) { kCellSmooth <- c(kCellSmooth, mean(prsurf$z[pip.cell > 0])) }
+      pip.temp[pip.temp > 0] <- 1
+      pip.temp[pip == 1] <- 1
+      pip <- pip.temp
       }
     }
   prsurf$z[pip == 0] <- NA
 
   # Plot the predicted surface
   if (missing(Percent)) { ifelse (k.growth %in% c(5, 7, 10, 11), Percent <- F, Percent <- T) }
-  c(prsurf$z, zlim, ticksGrowthScale, Colors) := set.zlim(k = prsurf$z, Percent, round.zlim, zlim, fix.min, fix.max, colorPaletteOfGFtbox)
+
+  if (cellularScale | plotResidual)
+    {
+    if (!plotResidual)
+      {
+      c(k, zlim, ticksGrowthScale, Colors) := set.zlim(kCellSmooth, Percent, round.zlim, zlim, fix.min, fix.max, colorPaletteOfGFtbox)
+      c(prsurf$z, zlim, ticksGrowthScale, Colors) := set.zlim(k = prsurf$z, Percent, round.zlim, zlim, fix.min, fix.max, colorPaletteOfGFtbox) # for contours
+      }
+    else
+      {
+      c(k, zlim, ticksGrowthScale, Colors) := set.zlim(centro$z - kCellSmooth, Percent, round.zlim = T, zlim, fix.min, fix.max, colorPaletteOfGFtbox = F)
+      }
+    mini <- zlim[1]
+    maxi <- zlim[2]
+    COLORS <- NA
+    }
+  else
+    {
+    c(prsurf$z, zlim, ticksGrowthScale, Colors) := set.zlim(k = prsurf$z, Percent, round.zlim, zlim, fix.min, fix.max, colorPaletteOfGFtbox)
+    COLORS <- Colors
+    color <- NA
+    }
+
   if (leafShape | leafShapeKriging)
     {
     if (missing(xlim)) { xlim <- c(-1.01*max(abs(LeafSpline$x)), 1.01*max(abs(LeafSpline$x))) }
     if (missing(ylim)) { ylim <- c(min(LeafSpline$y) - 0.01*abs(min(LeafSpline$y)), 1.01*max(LeafSpline$y)) }
-    image(prsurf, col = Colors, asp = 1, bty = "n", xaxt = "n", yaxt = "n", xlim = xlim, ylim = ylim, zlim = zlim)
+    image(prsurf, col = COLORS, asp = 1, bty = "n", xaxt = "n", yaxt = "n", xlim = xlim, ylim = ylim, zlim = zlim)
     if (leafShape) { polygon(LeafSpline, lwd = 2, border = "grey") }
     }
   else
     {
     if (missing(xlim)) { xlim <- c(min(VertX, na.rm = T), max(VertX, na.rm = T)) }
     if (missing(ylim)) { ylim <- c(min(VertY, na.rm = T) - 0.01*abs(min(VertY, na.rm = T)), 1.01*max(VertY, na.rm = T)) }
-    image(prsurf, col = Colors, asp = 1, bty = "n", xaxt = "n", yaxt = "n", xlim = xlim, ylim = ylim, zlim = zlim)
+    image(prsurf, col = COLORS, asp = 1, bty = "n", xaxt = "n", yaxt = "n", xlim = xlim, ylim = ylim, zlim = zlim)
     }
   
   # Cell outlines
   AreaTracked <- 0
   for (cell in levels(Shapes$Cell))
     {
+    if (cellularScale | plotResidual) { color <- Colors[round((1 - mini*(length(Colors)-1)/(maxi-mini)) + (length(Colors)-1)/(maxi-mini) * k[Growth$Cell == cell])] }
     vert <- na.omit(as.numeric(Cells[Cells$Cell == cell, -1]))
     XY <- cell.coord(vert, VertX, VertY, Vertices)
-    polygon(XY, border = "grey")
+    polygon(XY, border = "grey", col = color)
     AreaTracked <- AreaTracked + areapl(na.omit(XY))
     }
   
   # Contours
-  if (missing(contour.levels))
+  if (!plotResidual)
     {
-    ifelse (Percent, contour.levels <- seq(ceiling(zlim[1]), floor(zlim[2]), 1), contour.levels <- seq(ceiling(zlim[1]*100)/100, floor(zlim[2]*100)/100, 0.01))
+    if (missing(contour.levels))
+      {
+      ifelse (Percent, contour.levels <- seq(ceiling(zlim[1]), floor(zlim[2]), 1), contour.levels <- seq(ceiling(zlim[1]*100)/100, floor(zlim[2]*100)/100, 0.01))
+      }
+    contour.levels <- unique(contour.levels)
+    contour(prsurf, levels = contour.levels, add = T, lwd = 2)
     }
-  contour.levels <- unique(contour.levels)
-  contour(prsurf, levels = contour.levels, add = T, lwd = 2)
   
   # Anisotropy
   if (anisotropy)
@@ -2724,148 +2871,17 @@ plot.kriging <- function(InfoVertices, Vertices, Cells, Divisions, meanAngle, Gr
   if (!missing(scaleBar)) { plot.ScaleBar(ylim, scaleBar, tick, col.font) }
   
   # Growth scale
+  if (missing(txt.legend)) { txt.legend <- get.txt.legend(k.growth, Percent) }
+  if (plotResidual) { txt.legend <-  get.txt.legend.Residual(k.growth, Percent) }
   if (growthScale) { plot.GrowthScale(zlim, col.font, k.growth, Percent, txt.legend, Colors, drawTicks, ticksGrowthScale) }
-  
+
+  # Data export
+  if ((cellularScale | plotResidual) & exportCellValues) { return (CellValues = data.frame(Cell = levels(Shapes$Cell), K = K, kCellSmooth = kCellSmooth, Residual = K - kCellSmooth)) }
+
   }
 
 
-plot.akima <- function(InfoVertices, Vertices, Cells, Divisions, meanAngle, Growth, Shapes, 
-                       alignToPetioleLaminaBoundary = T, cellAtPetioleLaminaBoundary,
-                       Image1, Image2, leafShape, leafShapePredSurf = F, before = F, k.growth = 2,
-                       PNG = F, black = T, xlim, ylim, scaleBar, tick = F,
-                       Percent, round.zlim = T, zlim, fix.min = T, fix.max = T,
-                       colorPaletteOfGFtbox = T, growthScale = T, drawTicks = T, txt.legend,
-                       anisotropy = F, aniso.threshold = 0.05, aniso.lwd, aniso.lwd.constant = F,
-                       n.pred = 1000, contour.levels)
-  {
-  # This function performs and plots a Akima's bivariate interpolation (surface fitting) of growth
-  # between 'Image 1' and 'Image2' either computed in PointTracker or recomputed in R.
-  #
-  # Arguments are the same as for 'plot.kriging()', except that 'leafShapePredSurf' plus some extra:
-  #
-  #   - 'leafShapePredSurf' replaces 'leafShapeKriging'
-  #
-  #   - 'n.pred' has a default value of 1000 (R may crash if too small)
-  #
-  #   - 'polynomDegree' is not used.
-  
-  # Perform initial checks on parameters given by the user
-  initialChecks(scaleBar, xlim, ylim, zlim, aniso.threshold, aniso.lwd, n.pred, contour.levels, check.type = "akima")
-
-  # Prepare the plot window
-  if (!PNG) { windows() }
-  if (black) { par(bg = "black") }
-  ifelse (black, col.font <- "white", col.font <- "black")
-  layout(matrix(c(2, 1)), heights = c(1, 5))
-  par(mar = c(4,0,0,0))
-  
-  # Import leaf outline, cell shapes and vertices
-  if (missing(leafShape))
-    {
-    ifelse (file.exists(paste("Leaf Shape/", substr(Image1, 1, nchar(Image1) - 3), "txt", sep = "")) &
-            file.exists(paste("Leaf Shape/", substr(Image2, 1, nchar(Image2) - 3), "txt", sep = "")),
-            leafShape <- T, leafShape <- F)
-    }
-  c(VertX, VertY, ShapesX, ShapesY, LeafShape, LeafSpline) := scale.Objects(Image1, Image2, before, meanAngle, leafShape, alignToPetioleLaminaBoundary, cellAtPetioleLaminaBoundary, Shapes, Cells, Vertices, InfoVertices)
-
-  # Associate centroid (Xm, Ym) to growth
-  centro <- data.frame(x = NULL, y = NULL, z = NULL)
-  for (cell in levels(Shapes$Cell))
-    {
-    vert <- na.omit(as.numeric(Cells[Cells$Cell == cell, -1]))
-    XY <- cell.coord(vert, VertX, VertY, Vertices)
-    c(Xm, Ym) := get.Centroid(XY)
-    K <- Growth[Growth$Cell == cell, k.growth]
-    if (k.growth == 5) { K <- -K + meanAngle }
-    centro <- rbind(centro, data.frame(x = Xm, y = Ym, z = K))
-    }
-
-  # Surface prediction over the whole leaf or the tracked region
-  ifelse (leafShapePredSurf, minX <- min(LeafSpline$x), minX <- min(VertX, na.rm = T))
-  ifelse (leafShapePredSurf, maxX <- max(LeafSpline$x), maxX <- max(VertX, na.rm = T))
-  ifelse (leafShapePredSurf, minY <- min(LeafSpline$y), minY <- min(VertY, na.rm = T))
-  ifelse (leafShapePredSurf, maxY <- max(LeafSpline$y), maxY <- max(VertY, na.rm = T))
-  prsurf <- interp(centro$x, centro$y, centro$z, xo = seq(minX, maxX, length = n.pred), yo = seq(minY, maxY, length = n.pred), linear = F, extrap = T)
-
-  # Find which predicted values fall in the whole leaf or the tracked region
-  pip <- matrix(nrow = n.pred, ncol = n.pred)
-  if (leafShapePredSurf)
-    {
-    for (x in 1:n.pred)
-      {
-      pip.temp <- point.in.polygon(rep(prsurf$x[x], n.pred), prsurf$y, LeafSpline$x, LeafSpline$y)
-      pip.temp[pip.temp > 0] <- 1
-      pip[x, 1:n.pred] <- pip.temp
-      }
-    }
-  else
-    {
-    for (cell in levels(Shapes$Cell))
-      {
-      vert <- na.omit(as.numeric(Cells[Cells$Cell == cell, -1]))
-      XY <- cell.coord(vert, VertX, VertY, Vertices)
-      for (x in 1:n.pred)
-        {
-        pip.temp <- point.in.polygon(rep(prsurf$x[x], n.pred), prsurf$y, XY[,1], XY[,2])
-        pip.temp[pip.temp > 0] <- 1
-        pip.temp[pip[x, 1:n.pred] == 1] <- 1
-        pip[x, 1:n.pred] <- pip.temp
-        }
-      }
-    }
-  prsurf$z[pip == 0] <- NA
-
-  # Plot the predicted surface
-  if (missing(Percent)) { ifelse (k.growth %in% c(5, 7, 10, 11), Percent <- F, Percent <- T) }
-  c(prsurf$z, zlim, ticksGrowthScale, Colors) := set.zlim(k = prsurf$z, Percent, round.zlim, zlim, fix.min, fix.max, colorPaletteOfGFtbox)
-  if (leafShape | leafShapePredSurf)
-    {
-    if (missing(xlim)) { xlim <- c(-1.01*max(abs(LeafSpline$x)), 1.01*max(abs(LeafSpline$x))) }
-    if (missing(ylim)) { ylim <- c(min(LeafSpline$y) - 0.01*abs(min(LeafSpline$y)), 1.01*max(LeafSpline$y)) }
-    image(prsurf, col = Colors, asp = 1, bty = "n", xaxt = "n", yaxt = "n", xlim = xlim, ylim = ylim, zlim = zlim)
-    if (leafShape) { polygon(LeafSpline, lwd = 2, border = "grey") }
-    }
-  else
-    {
-    if (missing(xlim)) { xlim <- c(min(VertX, na.rm = T), max(VertX, na.rm = T)) }
-    if (missing(ylim)) { ylim <- c(min(VertY, na.rm = T) - 0.01*abs(min(VertY, na.rm = T)), 1.01*max(VertY, na.rm = T)) }
-    image(prsurf, col = Colors, asp = 1, bty = "n", xaxt = "n", yaxt = "n", xlim = xlim, ylim = ylim, zlim = zlim)
-    }
-  
-  # Cell outlines
-  AreaTracked <- 0
-  for (cell in levels(Shapes$Cell))
-    {
-    vert <- na.omit(as.numeric(Cells[Cells$Cell == cell, -1]))
-    XY <- cell.coord(vert, VertX, VertY, Vertices)
-    polygon(XY, border = "grey")
-    AreaTracked <- AreaTracked + areapl(na.omit(XY))
-    }
-  
-  # Contours
-  if (missing(contour.levels))
-    {
-    ifelse (Percent, contour.levels <- seq(ceiling(zlim[1]), floor(zlim[2]), 1), contour.levels <- seq(ceiling(zlim[1]*100)/100, floor(zlim[2]*100)/100, 0.01))
-    }
-  contour.levels <- unique(contour.levels)
-  contour(prsurf, levels = contour.levels, add = T, lwd = 2)
-  
-  # Anisotropy
-  if (anisotropy)
-    {
-    plot.Anisotropy(aniso.threshold, aniso.lwd, aniso.lwd.constant, AreaTracked, Shapes, ShapesX, ShapesY, Growth, meanAngle)
-    }
-    
-  # Scale bar
-  if (!missing(scaleBar)) { plot.ScaleBar(ylim, scaleBar, tick, col.font) }
-  
-  # Growth scale
-  if (growthScale) { plot.GrowthScale(zlim, col.font, k.growth, Percent, txt.legend, Colors, drawTicks, ticksGrowthScale) }
-  
-  }
-
-
-plot.division <- function(InfoVertices, Vertices, Cells, Divisions, meanAngle, Shapes, Div, 
+plot.division <- function(InfoVertices, Vertices, Cells, Divisions, meanAngle, Shapes, Div,
                           alignToPetioleLaminaBoundary = T, cellAtPetioleLaminaBoundary,
                           Image1, Image2, leafShape, before = F,
                           PNG = F, black = T, xlim, ylim, scaleBar, tick = F,
@@ -3234,12 +3250,13 @@ plot.division <- function(InfoVertices, Vertices, Cells, Divisions, meanAngle, S
 plot.intervals <- function(Cells, Divisions, Vertices, InfoVertices, meanAngle,
                            alignToPetioleLaminaBoundary = T, cellAtPetioleLaminaBoundary,
                            interval, Image0, initial.stage = T, plot.type,
-                           leafShape, leafShapeKriging = F, leafShapePredSurf = F, before = F, k.growth = 2,
+                           leafShape, leafShapeKriging = F, before = F, k.growth = 2,
                            PNG = T, black = T, xlim, ylim, scaleBar, tick = F,
                            Percent, round.zlim = T, zlim, fix.min = T, fix.max = T,
                            colorPaletteOfGFtbox = T, growthScale = T, drawTicks = T, txt.legend,
                            anisotropy, aniso.threshold = 0.05, aniso.lwd, aniso.lwd.constant = F,
-                           n.pred = 100, polynomDegree = 3, contour.levels,
+                           n.pred = 100, polynomDegree = 3, rangeParameter = 0.001, contour.levels,
+                           cellularScale = F, plotResidual = F, exportCellValues = F,
                            div.parameter = "div&comp", round.zlimDiv = T, zlimDiv, fix.minDiv = T, fix.maxDiv = T,
                            colorPaletteOfGFtboxDiv = T, growthScaleDiv = T, drawTicksDiv = F, txt.legendDiv,
                            wd, File, ini, show.cell.number = F)
@@ -3248,8 +3265,7 @@ plot.intervals <- function(Cells, Divisions, Vertices, InfoVertices, meanAngle,
   # given an initial 'Image 0'. It searches which images in the data set
   # are at the closest congruence to 'interval' until the end of the data set is reached.
   #
-  # Arguments are essentially the same as for 'plot.growth()', 'plot.kriging()',
-  # 'plot.akima()' and 'plot.division()', except that:
+  # Arguments are essentially the same as for 'plot.growth()', 'plot.kriging()' and 'plot.division()', except that:
   #
   #   - growth is recomputed at each step, so 'Growth' and 'Shapes' are unuseful here.
   #
@@ -3277,16 +3293,16 @@ plot.intervals <- function(Cells, Divisions, Vertices, InfoVertices, meanAngle,
   #   - 'ini' is the index of the image from which divisions start to be processed (see 'process.AllDiv()').
 
 
-  if (!plot.type %in% c("growth", "kriging", "akima", "division"))
+  if (!plot.type %in% c("growth", "kriging", "division"))
     {
-    stop("The argument 'plot.type' should be one string within \"growth\", \"kriging\",  \"akima\" or \"division\"")
+    stop("The argument 'plot.type' should be one string within \"growth\", \"kriging\" or \"division\"")
     }
-  ifelse (plot.type %in% c("kriging", "akima"), plot.name <- "contours", plot.name <- plot.type)
+  ifelse (plot.type == "kriging", plot.name <- "contours", plot.name <- plot.type)
   
   if (!file.exists("Graphical Outputs")) { dir.create("Graphical Outputs") }
   if (!file.exists("Divisions") & plot.type == "division") { dir.create("Divisions") } 
       
-  if (plot.type %in% c("growth", "kriging", "akima"))
+  if (plot.type %in% c("growth", "kriging"))
     {
     if      (k.growth == 2) { pref <- "karea" }
     else if (k.growth == 3) { pref <- "kmaj" }
@@ -3298,6 +3314,14 @@ plot.intervals <- function(Cells, Divisions, Vertices, InfoVertices, meanAngle,
     else if (k.growth == 9) { pref <- "kml" }
     else if (k.growth == 10) { pref <- "cellarea" }
     else if (k.growth == 11) { pref <- "sectorarea" }
+
+    if (plot.type == "kriging")
+      {
+      if      (!cellularScale & !leafShapeKriging) { pref <- paste(pref, "TrackedRegion", sep = "__") }
+      else if (!cellularScale & leafShapeKriging) { pref <- paste(pref, "WholeLeaf", sep = "__") }
+      else if (cellularScale & !plotResidual) { pref <- paste(pref, "Cell", sep = "__") }
+      else if (cellularScale & plotResidual) { pref <- paste(pref, "CellResidual", sep = "__") }
+      }
     }
   else
     {
@@ -3384,22 +3408,10 @@ plot.intervals <- function(Cells, Divisions, Vertices, InfoVertices, meanAngle,
                    Percent, round.zlim, zlim, fix.min, fix.max,
                    colorPaletteOfGFtbox, growthScale, drawTicks, txt.legend,
                    anisotropy, aniso.threshold, aniso.lwd, aniso.lwd.constant,
-                   n.pred, polynomDegree, contour.levels)
+                   n.pred, polynomDegree, rangeParameter, contour.levels,
+                   cellularScale, plotResidual, exportCellValues)
       }
     
-    else if (plot.type == "akima")
-      {
-      if (missing(anisotropy)) { anisotropy <- F }
-      plot.akima(InfoVertices, Vertices, Cells, Divisions, meanAngle, Growth, Shapes,
-                 alignToPetioleLaminaBoundary, cellAtPetioleLaminaBoundary,
-                 Image1, Image2, leafShape, leafShapeKriging, before, k.growth,
-                 PNG, black, xlim, ylim, scaleBar, tick,
-                 Percent, round.zlim, zlim, fix.min, fix.max,
-                 colorPaletteOfGFtbox, growthScale, drawTicks, txt.legend,
-                 anisotropy, aniso.threshold, aniso.lwd, aniso.lwd.constant,
-                 n.pred, contour.levels)
-      }
-          
     else if (plot.type == "division")
       {
       Div <- process.DivWithInterval(InfoVertices, Vertices, Cells, Divisions, meanAngle, Growth, Shapes,
