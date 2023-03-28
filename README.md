@@ -1,3 +1,5 @@
+<img src="https://user-images.githubusercontent.com/42646691/228163797-87b09c10-c498-4f95-a285-703cc70002a6.png" alt="Track_n_R_logo_GitHub" width="400"/>
+
 # Track-n-R
 An ImageJ toolset for the analysis of PointTracker data using R
 
